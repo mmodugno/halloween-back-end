@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	"halloween/internal/core/services"
 	"halloween/internal/models"
 	"net/http"
@@ -29,4 +30,25 @@ func PostCostume(w http.ResponseWriter, r *http.Request) {
 		Code:    http.StatusCreated,
 	})
 	return
+}
+
+func GetCostume(w http.ResponseWriter, r *http.Request) {
+	var costume models.Costume
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		ErrorBuilder(w, fmt.Errorf("id is required"), http.StatusBadRequest)
+		return
+	}
+	err := json.NewDecoder(r.Body).Decode(&costume)
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusBadRequest)
+	}
+	cclient := &services.CostumeClient{}
+	err = cclient.GetCostume()
+}
+
+// VoteCostume : Increses a costume votes by 1
+func VoteCostume(w http.ResponseWriter, r *http.Request) {
+	var costume models.Costume
+
 }
