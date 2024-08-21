@@ -23,8 +23,8 @@ func CreateRouter() *chi.Mux {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Post("/users", PostUser)
-		r.Post("/costumes", PostCostume)
-		r.Post("/costumes/{id}", VoteCostume)
+		r.Get("/users/log", Login)
+		r.Get("/users", GetAllUsers)
 	})
 
 	return r

@@ -63,12 +63,13 @@ func DBConnection() (*sql.DB, error) {
 	return db, nil
 }
 
-func CreateUserTable(db *sql.DB) error {
+func CreateUsersTable(db *sql.DB) error {
 	query := `CREATE TABLE IF NOT EXISTS users(id int primary key auto_increment,
 		is_admin boolean not null,
-		username text not null,
+		name text not null,
 		pw_code text not null, 
-        pending_votes int,
+		costume text not null, 
+        has_voted boolean,
         created_at datetime default CURRENT_TIMESTAMP,
     	updated_at datetime default CURRENT_TIMESTAMP)`
 
@@ -88,17 +89,21 @@ func CreateUserTable(db *sql.DB) error {
 	return nil
 }
 
-func CreateCustomeTable(db *sql.DB) error {
-	query := `CREATE TABLE IF NOT EXISTS costumes(id int primary key auto_increment,
-		description text not null,
-		owner text not null,
-        votes int)`
+func CreateVotesTable(db *sql.DB) error {
+	query := `CREATE TABLE IF NOT EXISTS votes(id int primary key auto_increment,
+		voter_id boolean not null,
+		name text not null,
+		pw_code text not null, 
+		costume text not null, 
+        has_voted boolean,
+        created_at datetime default CURRENT_TIMESTAMP,
+    	updated_at datetime default CURRENT_TIMESTAMP)`
 
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 	res, err := db.ExecContext(ctx, query)
 	if err != nil {
-		log.Printf("Error %s when creating custome table", err)
+		log.Printf("Error %s when creating product table", err)
 		return err
 	}
 	rows, err := res.RowsAffected()

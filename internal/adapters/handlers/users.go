@@ -25,9 +25,40 @@ func PostUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(Response{
-		Message: fmt.Sprintf("created %s's user successfully", user.Username),
+		Message: fmt.Sprintf("created %s's user successfully", user.Name),
 		Code:    http.StatusCreated,
 	})
+	return
+}
+
+func Login(w http.ResponseWriter, r *http.Request) {
+	password := r.Header.Get("password")
+	if password == "" {
+		ErrorBuilder(w, fmt.Errorf("error getting password"), http.StatusInternalServerError)
+		return
+	}
+	uclient := &services.UserClient{}
+	user, err := uclient.LogIn(password)
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusInternalServerError)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(user)
+	return
+
+}
+
+func GetAllUsers(w http.ResponseWriter, r *http.Request) {
+	uclient := &services.UserClient{}
+	users, err := uclient.GetAllUsers()
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(users)
 	return
 }
 
