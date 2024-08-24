@@ -51,7 +51,7 @@ func (c *VotesClient) InsertVote(u models.Vote) error {
 	return nil
 }
 
-func (c *VotesClient) GetWinner() ([]models.VoteResult, error) {
+func (c *VotesClient) GetWinners() ([]models.VoteResult, error) {
 	db, err := connectToVotesDB()
 	if err != nil {
 		log.Printf("Error %s when connecting to DB", err)
@@ -92,6 +92,94 @@ func (c *VotesClient) GetWinner() ([]models.VoteResult, error) {
 	}
 
 	return results, nil
+}
+
+func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
+	db, err := connectToVotesDB()
+	if err != nil {
+		log.Printf("Error %s when connecting to DB", err)
+		return nil, err
+	}
+	defer db.Close()
+
+	query := `SELECT u.costume, u.name, COUNT(*) as vote_count 
+				FROM votes v JOIN users u 
+				ON v.user_costume_id = u.id 
+				GROUP BY v.user_costume_id
+				ORDER BY vote_count DESC;`
+
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		log.Printf("Error %s when querying tables", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []models.VoteResult
+
+	for rows.Next() {
+		var v models.VoteResult
+		if err := rows.Scan(&v.Costume, &v.Name, &v.VotesCount); err != nil {
+			log.Printf("Error %s when scanning row", err)
+			return nil, err
+		}
+		messages, err := c.getMessages(v.Name)
+		if err != nil {
+			log.Printf("Error %s when getting messages", err)
+			return nil, err
+		}
+		v.Data = messages
+		results = append(results, v)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("Error %s during row iteration", err)
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func (c *VotesClient) getMessages(costume string) ([]models.VoteData, error) {
+	db, err := connectToVotesDB()
+	query := `SELECT u1.name, v.message
+		FROM 
+			votes v
+		JOIN 
+			users u1 ON u1.pw_code = v.voter_passphrase 
+		JOIN 
+			users u2 ON u2.id = v.user_costume_id
+		WHERE u2.name = ?`
+
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+
+	rows, err := db.QueryContext(ctx, query, costume)
+	if err != nil {
+		log.Printf("Error %s when querying votes table", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var votes []models.VoteData
+	for rows.Next() {
+		var u models.VoteData
+		if err := rows.Scan(&u.User, &u.Message); err != nil {
+			log.Printf("Error %s when scanning row", err)
+			return nil, err
+		}
+		votes = append(votes, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("Error %s during row iteration", err)
+		return nil, err
+	}
+
+	return votes, nil
 }
 
 func connectToVotesDB() (*sql.DB, error) {

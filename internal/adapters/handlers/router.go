@@ -28,8 +28,8 @@ func CreateRouter() *chi.Mux {
 		r.Get("/users", GetAllUsers)
 		r.Get("/users/passphrase", GetUserByPassphrase)
 		r.Post("/votes", PostVote)
-		r.Get("/results", GetWinners)
+		r.Get("/results/winners", GetWinners)
+		r.Get("/results", GetResults)
 	})
-
 	return r
 }

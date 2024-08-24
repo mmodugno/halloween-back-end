@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"halloween/internal/core/services"
 	"halloween/internal/models"
+	"log"
 	"net/http"
 )
 
 func PostVote(w http.ResponseWriter, r *http.Request) {
 	var vote models.Vote
 	err := json.NewDecoder(r.Body).Decode(&vote)
-	if err != nil || vote.UserCostumeID == "" {
+
+	log.Println(vote)
+
+	if err != nil || vote.UserCostumeID == 0 {
 		ErrorBuilder(w, err, http.StatusBadRequest)
 		return
 	}
@@ -22,6 +26,7 @@ func PostVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ucli := &services.UserClient{}
+	log.Println(passphrase)
 	user, err := ucli.GetUserByPathphrase(passphrase)
 	if err != nil {
 		ErrorBuilder(w, fmt.Errorf("user does not exist"), http.StatusBadRequest)
@@ -30,7 +35,7 @@ func PostVote(w http.ResponseWriter, r *http.Request) {
 
 	//If the user has already voted cannot vote again
 	if user.HasVoted {
-		ErrorBuilder(w, fmt.Errorf("user has already voted"), http.StatusBadRequest)
+		ErrorBuilder(w, fmt.Errorf("user has already voted"), http.StatusInternalServerError)
 		return
 	}
 
@@ -59,14 +64,28 @@ func PostVote(w http.ResponseWriter, r *http.Request) {
 
 func GetWinners(w http.ResponseWriter, _ *http.Request) {
 	cli := &services.VotesClient{}
-	winners, err := cli.GetWinner()
+	winners, err := cli.GetWinners()
 	if err != nil {
 		ErrorBuilder(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(winners)
+	return
+}
+
+func GetResults(w http.ResponseWriter, _ *http.Request) {
+	cli := &services.VotesClient{}
+	winners, err := cli.GetResults()
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(winners)
 	return
 }
