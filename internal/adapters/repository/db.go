@@ -90,12 +90,11 @@ func CreateUsersTable(db *sql.DB) error {
 }
 
 func CreateVotesTable(db *sql.DB) error {
+	fmt.Sprintf("CREATING VOTES TABLE")
 	query := `CREATE TABLE IF NOT EXISTS votes(id int primary key auto_increment,
-		voter_id boolean not null,
-		name text not null,
-		pw_code text not null, 
-		costume text not null, 
-        has_voted boolean,
+		voter_passphrase text not null,
+		user_costume_id int not null,
+		message text not null, 
         created_at datetime default CURRENT_TIMESTAMP,
     	updated_at datetime default CURRENT_TIMESTAMP)`
 

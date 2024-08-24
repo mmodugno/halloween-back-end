@@ -17,6 +17,8 @@ type UserClient struct {
 type Client interface {
 	InsertUser(u models.User) error
 	GetAllUsers() ([]models.User, error)
+	GetUserByPathphrase(pw string) (*models.User, error)
+	Vote(user *models.User) error
 }
 
 func (c *UserClient) InsertUser(u models.User) error {
@@ -53,6 +55,7 @@ func (c *UserClient) InsertUser(u models.User) error {
 	log.Printf("%d products created ", rows)
 	return nil
 }
+
 func (c *UserClient) LogIn(pass string) (*models.LoggedUser, error) {
 	db, err := connectToDB()
 	if err != nil {
@@ -118,6 +121,62 @@ func (c *UserClient) GetAllUsers() ([]models.User, error) {
 	}
 
 	return users, nil
+}
+
+func (c *UserClient) GetUserByPathphrase(pw string) (*models.User, error) {
+	db, err := connectToDB()
+	if err != nil {
+		log.Printf("Error %s when connecting to DB", err)
+		return nil, err
+	}
+	defer db.Close()
+
+	query := "SELECT id, is_admin, name, pw_code, has_voted, costume FROM users WHERE pw_code = ?;"
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+
+	stmt, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		log.Printf("Error %s when preparing SQL statement", err)
+		return nil, err
+	}
+	defer stmt.Close()
+
+	var user models.User
+	row := stmt.QueryRowContext(ctx, pw)
+	if err := row.Scan(&user.ID, &user.IsAdmin, &user.Name, &user.PWCode, &user.HasVoted, &user.Costume); err != nil {
+		log.Printf("Error scanning row: %s", err)
+		return nil, err
+	}
+
+	log.Printf("User logged in: %+v", user)
+	return &user, nil
+
+}
+
+func (c *UserClient) Vote(user *models.User) error {
+	db, err := connectToDB()
+	if err != nil {
+		log.Printf("Error %s when connecting to DB", err)
+		return err
+	}
+	defer db.Close()
+
+	// Update the HasVoted field in the database
+	updateQuery := "UPDATE users SET has_voted = ? WHERE id = ?"
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+	stmt, err := db.PrepareContext(ctx, updateQuery)
+	defer stmt.Close()
+
+	_, err = db.Exec(updateQuery, true, user.ID)
+	if err != nil {
+		log.Printf("Error %s when updating HasVoted field in DB", err)
+		return err
+	}
+
+	return nil
+
 }
 
 func connectToDB() (*sql.DB, error) {

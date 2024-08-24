@@ -32,7 +32,7 @@ func PostUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-	password := r.Header.Get("password")
+	password := r.Header.Get("User")
 	if password == "" {
 		ErrorBuilder(w, fmt.Errorf("error getting password"), http.StatusInternalServerError)
 		return
@@ -44,9 +44,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 	json.NewEncoder(w).Encode(user)
 	return
-
 }
 
 func GetAllUsers(w http.ResponseWriter, r *http.Request) {
@@ -69,4 +69,22 @@ func ErrorBuilder(w http.ResponseWriter, e error, code int) {
 		Message: fmt.Sprintf("error: %s", e.Error()),
 		Code:    code,
 	})
+}
+
+func GetUserByPassphrase(w http.ResponseWriter, r *http.Request) {
+	pw := r.Header.Get("User")
+	if pw == "" {
+		ErrorBuilder(w, fmt.Errorf("error getting passphrase"), http.StatusInternalServerError)
+		return
+	}
+	uclient := &services.UserClient{}
+	user, err := uclient.GetUserByPathphrase(pw)
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusInternalServerError)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	json.NewEncoder(w).Encode(user)
+	return
 }

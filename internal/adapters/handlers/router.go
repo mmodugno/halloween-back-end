@@ -12,10 +12,11 @@ type Response struct {
 
 func CreateRouter() *chi.Mux {
 	r := chi.NewRouter()
+
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTION"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CRSF-Token"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"X-PINGOTHER", "Accept", "Authorization", "Content-Type", "X-CRSF-Token", "User"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -23,8 +24,11 @@ func CreateRouter() *chi.Mux {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Post("/users", PostUser)
-		r.Get("/users/log", Login)
+		r.Get("/users/login", Login)
 		r.Get("/users", GetAllUsers)
+		r.Get("/users/passphrase", GetUserByPassphrase)
+		r.Post("/votes", PostVote)
+		r.Get("/results", GetWinners)
 	})
 
 	return r
