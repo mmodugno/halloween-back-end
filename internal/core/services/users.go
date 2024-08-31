@@ -105,7 +105,7 @@ func (c *UserClient) GetAllUsers() ([]models.User, error) {
 	}
 	defer rows.Close()
 
-	var users []models.User
+	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
 		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.HasVoted, &u.Costume); err != nil {

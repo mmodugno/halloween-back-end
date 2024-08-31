@@ -9,18 +9,29 @@ import (
 )
 
 const (
-	username = "root"
-	password = "db_halloween_pw"
-	hostname = "127.0.0.1:3306"
-	dbname   = "halloween"
+	// username = "root"
+	// password = "db_halloween_pw"
+	// hostname = "127.0.0.1:3306"
+	dbname = "halloween"
 )
 
 func dsn(dbName string) string {
-	return fmt.Sprintf("%s:%s@tcp(%s)/%s", username, password, hostname, dbName)
+	//user := os.Getenv("DB_USER")
+	//password := os.Getenv("DB_PASSWORD")
+	//host := os.Getenv("DB_HOST")
+	//port := os.Getenv("DB_PORT")
+	//dbname := os.Getenv("DB_NAME")
+
+	username := "root"
+	password := "db_halloween_pw"
+	hostname := "127.0.0.1:3306"
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s", username, password, hostname, "halloween")
+	//return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, password, host, port, dbname)
 }
 
 func DBConnection() (*sql.DB, error) {
-	db, err := sql.Open("mysql", dsn(""))
+	//dbname := os.Getenv("DB_NAME")
+	db, err := sql.Open("mysql", dsn("halloween"))
 	if err != nil {
 		log.Printf("Error %s when opening DB\n", err)
 		return nil, err

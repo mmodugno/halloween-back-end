@@ -69,14 +69,14 @@ func (c *VotesClient) GetWinners() ([]models.VoteResult, error) {
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
+	results := make([]models.VoteResult, 0)
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		log.Printf("Error %s when querying tables", err)
-		return nil, err
+		return results, err
 	}
 	defer rows.Close()
 
-	var results []models.VoteResult
 	for rows.Next() {
 		var v models.VoteResult
 		if err := rows.Scan(&v.Costume, &v.Name, &v.VotesCount); err != nil {
@@ -88,7 +88,7 @@ func (c *VotesClient) GetWinners() ([]models.VoteResult, error) {
 
 	if err := rows.Err(); err != nil {
 		log.Printf("Error %s during row iteration", err)
-		return nil, err
+		return results, err
 	}
 
 	return results, nil
@@ -114,11 +114,11 @@ func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		log.Printf("Error %s when querying tables", err)
-		return nil, err
+		return []models.VoteResult{}, err
 	}
 	defer rows.Close()
 
-	var results []models.VoteResult
+	results := make([]models.VoteResult, 0)
 
 	for rows.Next() {
 		var v models.VoteResult
