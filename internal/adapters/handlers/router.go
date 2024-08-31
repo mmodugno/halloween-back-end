@@ -35,14 +35,21 @@ func CreateRouter() *chi.Mux {
 		r.Get("/results/winners", GetWinners)
 		r.Get("/results", GetResults)
 		r.Put("/finish", PutFinish)
+		r.Put("/finish/cancel", CancelFinish)
 		r.Get("/finish", GetFinish)
 	})
 	return r
 }
 
-func PutFinish(w http.ResponseWriter, r *http.Request) {
+func PutFinish(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	isFinished = true
+	w.WriteHeader(http.StatusOK)
+}
+
+func CancelFinish(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	isFinished = false
 	w.WriteHeader(http.StatusOK)
 }
 
