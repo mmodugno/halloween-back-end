@@ -31,6 +31,29 @@ func PostUser(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+// PostUsers : creates multiple new users
+func PostUsers(w http.ResponseWriter, r *http.Request) {
+	var users []models.User
+	err := json.NewDecoder(r.Body).Decode(&users)
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusBadRequest)
+		return
+	}
+	uclient := &services.UserClient{}
+	err = uclient.InsertUsers(users, false)
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(Response{
+		Message: fmt.Sprintf("created %d users successfully", len(users)),
+		Code:    http.StatusCreated,
+	})
+	return
+}
+
 func Login(w http.ResponseWriter, r *http.Request) {
 	password := r.Header.Get("User")
 	if password == "" {

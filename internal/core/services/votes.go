@@ -51,6 +51,36 @@ func (c *VotesClient) InsertVote(u models.Vote) error {
 	return nil
 }
 
+func (c *VotesClient) InsertVotes(votes []models.Vote) error {
+	db, err := connectToVotesDB()
+	if err != nil {
+		log.Printf("Error %s when connecting to DB", err)
+		return err
+	}
+	defer db.Close()
+
+	query := "INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)"
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+
+	stmt, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		log.Printf("Error %s when preparing SQL statement", err)
+		return err
+	}
+	defer stmt.Close()
+
+	for _, v := range votes {
+		_, err := stmt.ExecContext(ctx, v.VoterPassphrase, v.UserCostumeID, v.Message)
+		if err != nil {
+			log.Printf("Error %s when inserting row into votes table", err)
+			return err
+		}
+	}
+	log.Printf("%d votes created ", len(votes))
+	return nil
+}
+
 func (c *VotesClient) GetWinners() ([]models.VoteResult, error) {
 	db, err := connectToVotesDB()
 	if err != nil {

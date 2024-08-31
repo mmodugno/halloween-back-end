@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -40,7 +41,7 @@ func (c *UserClient) InsertUser(u models.User) error {
 	}
 	defer stmt.Close()
 
-	pw := generatePass(u.Name)
+	pw := generatePass(strings.ToLower(u.Name), false)
 
 	res, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, false)
 	if err != nil {
@@ -53,6 +54,38 @@ func (c *UserClient) InsertUser(u models.User) error {
 		return err
 	}
 	log.Printf("%d products created ", rows)
+	return nil
+}
+
+func (c *UserClient) InsertUsers(users []models.User, mock bool) error {
+	db, err := connectToDB()
+	if err != nil {
+		log.Printf("Error %s when connecting to DB", err)
+		return err
+	}
+	defer db.Close()
+
+	query := "INSERT INTO users(is_admin, name, pw_code, costume, has_voted) VALUES (?, ?, ?, ?, ?)"
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+
+	stmt, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		log.Printf("Error %s when preparing SQL statement", err)
+		return err
+	}
+	defer stmt.Close()
+
+	for _, u := range users {
+		pw := generatePass(strings.ToLower(u.Name), mock)
+
+		_, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, u.HasVoted)
+		if err != nil {
+			log.Printf("Error %s when inserting row into users table", err)
+			return err
+		}
+	}
+	log.Printf("%d users created ", len(users))
 	return nil
 }
 
@@ -195,10 +228,13 @@ func connectToDB() (*sql.DB, error) {
 	return db, nil
 }
 
-func generatePass(name string) string {
-	id := ""
-	for i := 0; i < 4; i++ {
-		id += strconv.Itoa(rand.Intn(10))
+func generatePass(name string, mock bool) string {
+	if !mock {
+		id := ""
+		for i := 0; i < 4; i++ {
+			id += strconv.Itoa(rand.Intn(10))
+		}
+		return name + id
 	}
-	return name + id
+	return name + "1111"
 }
