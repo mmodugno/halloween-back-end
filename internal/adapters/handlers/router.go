@@ -10,8 +10,6 @@ type Response struct {
 	Code    int
 }
 
-var isFinished bool = false
-
 func CreateRouter() *chi.Mux {
 	r := chi.NewRouter()
 
@@ -36,6 +34,8 @@ func CreateRouter() *chi.Mux {
 		r.Put("/finish", PutFinish)
 		r.Put("/finish/cancel", CancelFinish)
 		r.Get("/finish", GetFinish)
+		r.Put("/start", StartGame)
+		r.Get("/start", IsStarted)
 		r.Post("/mocks/create", TestsBach)
 	})
 	return r

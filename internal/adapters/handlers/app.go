@@ -10,6 +10,14 @@ import (
 	"os"
 )
 
+var isFinished bool = false
+var hasStarted bool = false
+
+type ResponseBool struct {
+	Message bool
+	Code    int
+}
+
 func PutFinish(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	isFinished = true
@@ -26,12 +34,7 @@ func GetFinish(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	type Response struct {
-		Message bool
-		Code    int
-	}
-
-	json.NewEncoder(w).Encode(Response{
+	json.NewEncoder(w).Encode(ResponseBool{
 		Message: isFinished,
 		Code:    http.StatusOK,
 	})
@@ -57,4 +60,20 @@ func TestsBach(w http.ResponseWriter, _ *http.Request) {
 	vcli.InsertVotes(votes)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func StartGame(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	hasStarted = true
+	w.WriteHeader(http.StatusOK)
+}
+
+func IsStarted(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	json.NewEncoder(w).Encode(ResponseBool{
+		Message: hasStarted,
+		Code:    http.StatusOK,
+	})
 }
