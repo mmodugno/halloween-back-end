@@ -127,7 +127,7 @@ func (c *UserClient) GetAllUsers() ([]models.User, error) {
 	}
 	defer db.Close()
 
-	query := "SELECT id, is_admin, name, pw_code, has_voted, costume FROM users"
+	query := "SELECT id, is_admin, name, pw_code, has_voted, costume FROM users ORDER BY name ASC;"
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 

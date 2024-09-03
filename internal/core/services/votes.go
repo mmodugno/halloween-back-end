@@ -132,7 +132,7 @@ func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
 	}
 	defer db.Close()
 
-	query := `SELECT u.costume, u.name, COUNT(*) as vote_count 
+	query := `SELECT u.id ,u.costume, u.name, COUNT(*) as vote_count 
 				FROM votes v JOIN users u 
 				ON v.user_costume_id = u.id 
 				GROUP BY v.user_costume_id
@@ -152,11 +152,11 @@ func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
 
 	for rows.Next() {
 		var v models.VoteResult
-		if err := rows.Scan(&v.Costume, &v.Name, &v.VotesCount); err != nil {
+		if err := rows.Scan(&v.ID, &v.Costume, &v.Name, &v.VotesCount); err != nil {
 			log.Printf("Error %s when scanning row", err)
 			return nil, err
 		}
-		messages, err := c.getMessages(v.Name)
+		messages, err := c.GetMessages(v.ID)
 		if err != nil {
 			log.Printf("Error %s when getting messages", err)
 			return nil, err
@@ -173,7 +173,7 @@ func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
 	return results, nil
 }
 
-func (c *VotesClient) getMessages(costume string) ([]models.VoteData, error) {
+func (c *VotesClient) GetMessages(id string) ([]models.VoteData, error) {
 	db, err := connectToVotesDB()
 	query := `SELECT u1.name, v.message
 		FROM 
@@ -182,12 +182,12 @@ func (c *VotesClient) getMessages(costume string) ([]models.VoteData, error) {
 			users u1 ON u1.pw_code = v.voter_passphrase 
 		JOIN 
 			users u2 ON u2.id = v.user_costume_id
-		WHERE u2.name = ?`
+		WHERE u2.ID = ?`
 
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
-	rows, err := db.QueryContext(ctx, query, costume)
+	rows, err := db.QueryContext(ctx, query, id)
 	if err != nil {
 		log.Printf("Error %s when querying votes table", err)
 		return nil, err

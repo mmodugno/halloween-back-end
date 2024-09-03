@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	"halloween/internal/core/services"
 	"halloween/internal/models"
 	"log"
@@ -87,5 +88,19 @@ func GetResults(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(winners)
+	return
+}
+
+func GetMessages(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	cli := &services.VotesClient{}
+	messages, err := cli.GetMessages(id)
+	if err != nil {
+		ErrorBuilder(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(messages)
 	return
 }

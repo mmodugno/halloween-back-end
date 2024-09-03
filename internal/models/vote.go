@@ -8,6 +8,7 @@ type Vote struct {
 }
 
 type VoteResult struct {
+	ID         string     `json:"id"`
 	Costume    string     `json:"costume"`
 	Name       string     `json:"name"`
 	VotesCount int        `json:"votes_count"`
