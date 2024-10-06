@@ -194,7 +194,7 @@ func (c *VotesClient) GetMessages(id string) ([]models.VoteData, error) {
 	}
 	defer rows.Close()
 
-	var votes []models.VoteData
+	votes := make([]models.VoteData, 0)
 	for rows.Next() {
 		var u models.VoteData
 		if err := rows.Scan(&u.User, &u.Message); err != nil {
