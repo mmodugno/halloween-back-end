@@ -231,10 +231,10 @@ func connectToDB() (*sql.DB, error) {
 func generatePass(name string, mock bool) string {
 	if !mock {
 		id := ""
-		for i := 0; i < 4; i++ {
+		for i := 0; i < 2; i++ {
 			id += strconv.Itoa(rand.Intn(10))
 		}
 		return name + id
 	}
-	return name + "1111"
+	return name + "11"
 }
