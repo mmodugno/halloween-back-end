@@ -156,6 +156,7 @@ func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
 			log.Printf("Error %s when scanning row", err)
 			return nil, err
 		}
+		log.Printf(v.Name)
 		messages, err := c.GetMessages(v.ID)
 		if err != nil {
 			log.Printf("Error %s when getting messages", err)

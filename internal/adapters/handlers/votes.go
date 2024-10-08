@@ -35,8 +35,8 @@ func PostVote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//If the user has already voted cannot vote again
-	if user.HasVoted {
-		ErrorBuilder(w, fmt.Errorf("user has already voted"), http.StatusInternalServerError)
+	if user.PendingVotes == 0 {
+		ErrorBuilder(w, fmt.Errorf("user has already voted twice"), http.StatusInternalServerError)
 		return
 	}
 
@@ -47,7 +47,6 @@ func PostVote(w http.ResponseWriter, r *http.Request) {
 		ErrorBuilder(w, err, http.StatusInternalServerError)
 		return
 	}
-	//Set user's has_vote value true
 	err = ucli.Vote(user)
 	if err != nil {
 		ErrorBuilder(w, fmt.Errorf("error in updating users' vote"), http.StatusInternalServerError)

@@ -4,47 +4,47 @@
     "costume": "IT: El Payaso",
     "is_admin": true,
     "message": "guau",
-    "has_voted": true,
+    "pending_votes": 0,
     "user_costume_id": 2,
-    "voter_passphrase": "sai1111"
+    "voter_passphrase": "sai11"
   },
   {
     "name": "Maga",
     "costume": "Georgie de IT",
     "is_admin": true,
-    "has_voted": true,
+    "pending_votes": 0,
     "user_costume_id": 3,
-    "voter_passphrase": "maga1111"
+    "voter_passphrase": "maga11"
   },
   {
     "name": "Dei",
     "costume": "Anime",
     "user_costume_id": 2,
-    "has_voted": true,
+    "pending_votes": 0,
     "message": "tremendo",
-    "voter_passphrase": "dei1111"
+    "voter_passphrase": "dei11"
   },
   {
     "name": "Nv",
     "costume": "Semaforo",
     "user_costume_id": 2,
-    "has_voted": true,
-    "voter_passphrase": "nv1111"
+    "pending_votes": 0,
+    "voter_passphrase": "nv11"
   },
   {
     "name": "Alguien",
     "costume": "Algo",
     "user_costume_id": 1,
-    "has_voted": true,
+    "pending_votes": 0,
     "message": "buenardo",
-    "voter_passphrase": "alguien1111"
+    "voter_passphrase": "alguien11"
   },
   {
     "name": "Chiara",
     "costume": "Coraline",
     "user_costume_id": 1,
-    "has_voted": true,
-    "voter_passphrase": "chiara1111"
+    "pending_votes": 0,
+    "voter_passphrase": "chiara11"
   },
   {
     "name": "Who",

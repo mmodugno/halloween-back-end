@@ -81,7 +81,7 @@ func CreateUsersTable(db *sql.DB) error {
 		name text not null,
 		pw_code text not null, 
 		costume text not null, 
-        has_voted boolean,
+        pending_votes int not null,
         created_at datetime default CURRENT_TIMESTAMP,
     	updated_at datetime default CURRENT_TIMESTAMP)`
 

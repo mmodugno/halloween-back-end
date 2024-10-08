@@ -30,7 +30,7 @@ func (c *UserClient) InsertUser(u models.User) error {
 	}
 	defer db.Close()
 
-	query := "INSERT INTO users(is_admin, name, pw_code, costume, has_voted) VALUES (?, ?, ?, ?, ?)"
+	query := "INSERT INTO users(is_admin, name, pw_code, costume, pending_votes) VALUES (?, ?, ?, ?, ?)"
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
@@ -43,7 +43,7 @@ func (c *UserClient) InsertUser(u models.User) error {
 
 	pw := generatePass(strings.ToLower(u.Name), false)
 
-	res, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, false)
+	res, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, 2) //2 votes for each user
 	if err != nil {
 		log.Printf("Error %s when inserting row into products table", err)
 		return err
@@ -65,7 +65,7 @@ func (c *UserClient) InsertUsers(users []models.User, mock bool) error {
 	}
 	defer db.Close()
 
-	query := "INSERT INTO users(is_admin, name, pw_code, costume, has_voted) VALUES (?, ?, ?, ?, ?)"
+	query := "INSERT INTO users(is_admin, name, pw_code, costume, pending_votes) VALUES (?, ?, ?, ?, ?)"
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
@@ -79,7 +79,7 @@ func (c *UserClient) InsertUsers(users []models.User, mock bool) error {
 	for _, u := range users {
 		pw := generatePass(strings.ToLower(u.Name), mock)
 
-		_, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, u.HasVoted)
+		_, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, u.PendingVotes)
 		if err != nil {
 			log.Printf("Error %s when inserting row into users table", err)
 			return err
@@ -97,7 +97,7 @@ func (c *UserClient) LogIn(pass string) (*models.LoggedUser, error) {
 	}
 	defer db.Close()
 
-	query := `SELECT id, is_admin, has_voted FROM users WHERE pw_code = ?`
+	query := `SELECT id, is_admin, pending_votes FROM users WHERE pw_code = ?`
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
@@ -110,7 +110,7 @@ func (c *UserClient) LogIn(pass string) (*models.LoggedUser, error) {
 
 	var user models.LoggedUser
 	row := stmt.QueryRowContext(ctx, pass)
-	if err := row.Scan(&user.ID, &user.IsAdmin, &user.HasVoted); err != nil {
+	if err := row.Scan(&user.ID, &user.IsAdmin, &user.PendingVotes); err != nil {
 		log.Printf("Error scanning row: %s", err)
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (c *UserClient) GetAllUsers() ([]models.User, error) {
 	}
 	defer db.Close()
 
-	query := "SELECT id, is_admin, name, pw_code, has_voted, costume FROM users ORDER BY name ASC;"
+	query := "SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users ORDER BY name ASC;"
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
@@ -141,7 +141,7 @@ func (c *UserClient) GetAllUsers() ([]models.User, error) {
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.HasVoted, &u.Costume); err != nil {
+		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume); err != nil {
 			log.Printf("Error %s when scanning row", err)
 			return nil, err
 		}
@@ -164,7 +164,7 @@ func (c *UserClient) GetUserByPathphrase(pw string) (*models.User, error) {
 	}
 	defer db.Close()
 
-	query := "SELECT id, is_admin, name, pw_code, has_voted, costume FROM users WHERE pw_code = ?;"
+	query := "SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users WHERE pw_code = ?;"
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 
@@ -177,7 +177,7 @@ func (c *UserClient) GetUserByPathphrase(pw string) (*models.User, error) {
 
 	var user models.User
 	row := stmt.QueryRowContext(ctx, pw)
-	if err := row.Scan(&user.ID, &user.IsAdmin, &user.Name, &user.PWCode, &user.HasVoted, &user.Costume); err != nil {
+	if err := row.Scan(&user.ID, &user.IsAdmin, &user.Name, &user.PWCode, &user.PendingVotes, &user.Costume); err != nil {
 		log.Printf("Error scanning row: %s", err)
 		return nil, err
 	}
@@ -196,15 +196,15 @@ func (c *UserClient) Vote(user *models.User) error {
 	defer db.Close()
 
 	// Update the HasVoted field in the database
-	updateQuery := "UPDATE users SET has_voted = ? WHERE id = ?"
+	updateQuery := "UPDATE users SET pending_votes = ? WHERE id = ?"
 	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelfunc()
 	stmt, err := db.PrepareContext(ctx, updateQuery)
 	defer stmt.Close()
 
-	_, err = db.Exec(updateQuery, true, user.ID)
+	_, err = db.Exec(updateQuery, max(user.PendingVotes-1, 0), user.ID)
 	if err != nil {
-		log.Printf("Error %s when updating HasVoted field in DB", err)
+		log.Printf("Error %s when updating pending votes field in DB", err)
 		return err
 	}
 
