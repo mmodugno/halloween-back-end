@@ -43,7 +43,7 @@ func (c *UserClient) InsertUser(u models.User) error {
 
 	pw := generatePass(strings.ToLower(u.Name), false)
 
-	res, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, 2) //2 votes for each user
+	res, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, u.PendingVotes) //2 votes for each user
 	if err != nil {
 		log.Printf("Error %s when inserting row into products table", err)
 		return err
