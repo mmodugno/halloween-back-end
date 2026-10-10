@@ -117,13 +117,27 @@ func (s *VoteService) Undo(ctx context.Context, passphrase string, candidateID i
 	return tx.Commit()
 }
 
-// Feed returns the latest messages, newest first, without saying who wrote them.
+// Messages show up in the feed a random 2 to 8 minutes after the vote, so
+// nobody can tell who wrote one by watching who just voted.
+const (
+	FeedMinDelay    = 2 * time.Minute
+	FeedDelaySpread = 6 * time.Minute
+)
+
+// Feed returns the latest published messages, newest first, without saying
+// who wrote them or when.
 func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT v.id, u.costume, v.message, v.created_at
-		FROM votes v JOIN users u ON u.id = v.user_costume_id
-		WHERE v.message <> ''
-		ORDER BY v.id DESC
-		LIMIT ?`, limit)
+	// The delay is derived from the vote id, so it is stable across requests.
+	rows, err := s.db.QueryContext(ctx, `SELECT id, costume, message FROM (
+			SELECT v.id, u.costume, v.message,
+				v.created_at + INTERVAL (? + CRC32(CONCAT('feed', v.id)) % ?) SECOND AS visible_at
+			FROM votes v JOIN users u ON u.id = v.user_costume_id
+			WHERE v.message <> ''
+		) published
+		WHERE visible_at <= NOW()
+		ORDER BY visible_at DESC
+		LIMIT ?`,
+		int(FeedMinDelay.Seconds()), int(FeedDelaySpread.Seconds())+1, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +146,7 @@ func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, e
 	items := make([]models.FeedItem, 0)
 	for rows.Next() {
 		var item models.FeedItem
-		if err := rows.Scan(&item.ID, &item.Costume, &item.Message, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Costume, &item.Message); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 type Vote struct {
 	ID              string `json:"id"`
 	VoterPassphrase string `json:"voter_passphrase"`
@@ -24,8 +22,7 @@ type VoteData struct {
 
 // FeedItem is an anonymous message shown live while people vote.
 type FeedItem struct {
-	ID        int64     `json:"id"`
-	Costume   string    `json:"costume"`
-	Message   string    `json:"message"`
-	CreatedAt time.Time `json:"created_at"`
+	ID      int64  `json:"id"`
+	Costume string `json:"costume"`
+	Message string `json:"message"`
 }

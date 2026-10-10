@@ -62,6 +62,8 @@ func CreateRouter(h *Handler) *chi.Mux {
 		r.Get("/finish", h.GetFinished)
 		r.Put("/start", h.setState(setStarted, true))
 		r.Get("/start", h.GetStarted)
+		r.Get("/game", h.GetGame)
+		r.Put("/game", h.PutGame)
 		r.Post("/mocks/create", h.LoadMocks)
 	})
 	return r
