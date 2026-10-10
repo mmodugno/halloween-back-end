@@ -35,6 +35,7 @@ func (c Config) dsn(dbName string) string {
 	cfg.Addr = net.JoinHostPort(c.Host, c.Port)
 	cfg.DBName = dbName
 	cfg.ParseTime = true
+	cfg.ClientFoundRows = true // UPDATE reports matched rows, even if nothing changed
 	return cfg.FormatDSN()
 }
 

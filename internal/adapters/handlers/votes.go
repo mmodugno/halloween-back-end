@@ -52,8 +52,19 @@ func (h *Handler) GetResults(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, results)
 }
 
+// GetMessages returns who voted for a user and what they wrote. Only that
+// user (or an admin) can read them.
 func (h *Handler) GetMessages(w http.ResponseWriter, r *http.Request) {
-	messages, err := h.votes.Messages(r.Context(), chi.URLParam(r, "id"))
+	user, ok := h.currentUser(w, r)
+	if !ok {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if !user.IsAdmin && strconv.FormatInt(user.ID, 10) != id {
+		writeError(w, http.StatusForbidden, errors.New("you can only read your own messages"))
+		return
+	}
+	messages, err := h.votes.Messages(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err)
 		return

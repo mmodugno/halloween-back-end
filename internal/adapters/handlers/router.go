@@ -46,25 +46,40 @@ func CreateRouter(h *Handler) *chi.Mux {
 	}))
 
 	r.Route("/api", func(r chi.Router) {
+		// Anyone
 		r.Get("/users/login", h.Login)
-		r.Post("/users", h.PostUser)
-		r.Post("/users/batch", h.PostUsers)
 		r.Get("/users", h.GetAllUsers)
 		r.Get("/users/passphrase", h.GetUserByPassphrase)
 		r.Post("/votes", h.PostVote)
 		r.Delete("/votes/{candidateID}", h.UndoVote)
 		r.Get("/feed", h.GetFeed)
-		r.Get("/results", h.GetResults)
 		r.Get("/results/winners", h.GetWinners)
-		r.Get("/results/{id}", h.GetMessages)
-		r.Put("/finish", h.setState(setFinished, true))
-		r.Put("/finish/cancel", h.setState(setFinished, false))
+		r.Get("/results/{id}", h.GetMessages) // only your own, or any if admin
 		r.Get("/finish", h.GetFinished)
-		r.Put("/start", h.setState(setStarted, true))
 		r.Get("/start", h.GetStarted)
 		r.Get("/game", h.GetGame)
-		r.Put("/game", h.PutGame)
-		r.Post("/mocks/create", h.LoadMocks)
+
+		// Creating users: open while the app has no users, then admins only.
+		r.Group(func(r chi.Router) {
+			r.Use(h.requireAdminOrSetup)
+			r.Post("/users", h.PostUser)
+			r.Post("/users/batch", h.PostUsers)
+			r.Post("/mocks/create", h.LoadMocks)
+		})
+
+		// Admins only
+		r.Group(func(r chi.Router) {
+			r.Use(h.requireAdmin)
+			r.Put("/game", h.PutGame)
+			r.Put("/finish", h.setState(setFinished, true))
+			r.Put("/finish/cancel", h.setState(setFinished, false))
+			r.Put("/start", h.setState(setStarted, true))
+			r.Get("/results", h.GetResults)
+			r.Get("/admin/users", h.AdminUsers)
+			r.Put("/admin/users/{id}", h.UpdateUser)
+			r.Delete("/admin/users/{id}", h.DeleteUser)
+			r.Post("/admin/votes/reset", h.ResetVotes)
+		})
 	})
 	return r
 }
@@ -85,9 +100,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, services.ErrNotFound):
 		status = http.StatusUnauthorized
-	case errors.Is(err, services.ErrSelfVote), errors.Is(err, services.ErrUnknownCandidate):
+	case errors.Is(err, services.ErrSelfVote), errors.Is(err, services.ErrUnknownCandidate),
+		errors.Is(err, services.ErrMissingName):
 		status = http.StatusBadRequest
-	case errors.Is(err, services.ErrVoteNotFound):
+	case errors.Is(err, services.ErrForbidden):
+		status = http.StatusForbidden
+	case errors.Is(err, services.ErrVoteNotFound), errors.Is(err, services.ErrUserNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, services.ErrNoVotesLeft), errors.Is(err, services.ErrAlreadyVotedFor),
 		errors.Is(err, services.ErrVotingClosed), errors.Is(err, services.ErrUndoExpired):

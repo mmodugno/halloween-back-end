@@ -167,6 +167,22 @@ func checkVotingOpen(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+// Reset deletes every vote and gives everyone the same number of votes.
+func (s *VoteService) Reset(ctx context.Context, votesPerUser int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM votes"); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET pending_votes = ?", votesPerUser); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // Seed inserts votes as-is, skipping validation. Used by the mock data loader.
 func (s *VoteService) Seed(ctx context.Context, votes []models.Vote) error {
 	for _, v := range votes {
