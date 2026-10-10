@@ -2,112 +2,87 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"halloween/internal/core/services"
-	"halloween/internal/models"
 	"net/http"
+
+	"halloween/internal/models"
 )
 
-// PostUser : creates a new user
-func PostUser(w http.ResponseWriter, r *http.Request) {
+var errMissingPassphrase = errors.New("passphrase is required")
+
+// PostUser creates one user and returns it with its generated pass code.
+func (h *Handler) PostUser(w http.ResponseWriter, r *http.Request) {
 	var user models.User
-	err := json.NewDecoder(r.Body).Decode(&user)
-	if err != nil {
-		ErrorBuilder(w, err, http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	uclient := &services.UserClient{}
-	err = uclient.InsertUser(user)
-	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(Response{
-		Message: fmt.Sprintf("created %s's user successfully", user.Name),
-		Code:    http.StatusCreated,
-	})
-	return
+	h.createUsers(w, r, []models.User{user})
 }
 
-// PostUsers : creates multiple new users
-func PostUsers(w http.ResponseWriter, r *http.Request) {
+// PostUsers creates several users and returns them with their generated pass codes.
+func (h *Handler) PostUsers(w http.ResponseWriter, r *http.Request) {
 	var users []models.User
-	err := json.NewDecoder(r.Body).Decode(&users)
-	if err != nil {
-		ErrorBuilder(w, err, http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&users); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	uclient := &services.UserClient{}
-	err = uclient.InsertUsers(users, false)
+	h.createUsers(w, r, users)
+}
+
+func (h *Handler) createUsers(w http.ResponseWriter, r *http.Request, users []models.User) {
+	created, err := h.users.Create(r.Context(), users, false)
 	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
+		writeServiceError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(Response{
-		Message: fmt.Sprintf("created %d users successfully", len(users)),
+	writeJSON(w, http.StatusCreated, Response{
+		Message: fmt.Sprintf("created %d users successfully", len(created)),
 		Code:    http.StatusCreated,
-	})
-	return
-}
-
-func Login(w http.ResponseWriter, r *http.Request) {
-	password := r.Header.Get("User")
-	if password == "" {
-		ErrorBuilder(w, fmt.Errorf("error getting password"), http.StatusInternalServerError)
-		return
-	}
-	uclient := &services.UserClient{}
-	user, err := uclient.LogIn(password)
-	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-	json.NewEncoder(w).Encode(user)
-	return
-}
-
-func GetAllUsers(w http.ResponseWriter, r *http.Request) {
-	uclient := &services.UserClient{}
-	users, err := uclient.GetAllUsers()
-	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(users)
-	return
-}
-
-func ErrorBuilder(w http.ResponseWriter, e error, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(Response{
-		Message: fmt.Sprintf("error: %s", e.Error()),
-		Code:    code,
+		Users:   created,
 	})
 }
 
-func GetUserByPassphrase(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.currentUser(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, models.LoggedUser{
+		ID:           user.ID,
+		IsAdmin:      user.IsAdmin,
+		PendingVotes: user.PendingVotes,
+	})
+}
+
+func (h *Handler) GetUserByPassphrase(w http.ResponseWriter, r *http.Request) {
+	if user, ok := h.currentUser(w, r); ok {
+		writeJSON(w, http.StatusOK, user)
+	}
+}
+
+func (h *Handler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.users.List(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, users)
+}
+
+// currentUser looks up the user whose pass code is in the "User" header.
+// On failure it writes the error response and returns false.
+func (h *Handler) currentUser(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
 	pw := r.Header.Get("User")
 	if pw == "" {
-		ErrorBuilder(w, fmt.Errorf("error getting passphrase"), http.StatusInternalServerError)
-		return
+		writeError(w, http.StatusUnauthorized, errMissingPassphrase)
+		return nil, false
 	}
-	uclient := &services.UserClient{}
-	user, err := uclient.GetUserByPathphrase(pw)
+	user, err := h.users.GetByPassphrase(r.Context(), pw)
 	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
+		writeServiceError(w, err)
+		return nil, false
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-	json.NewEncoder(w).Encode(user)
-	return
+	return user, true
 }

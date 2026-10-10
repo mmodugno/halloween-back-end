@@ -3,228 +3,249 @@ package services
 import (
 	"context"
 	"database/sql"
-	"halloween/internal/adapters/repository"
-	"halloween/internal/models"
-	"log"
+	"errors"
 	"time"
+
+	"halloween/internal/models"
 )
 
-type VotesClient struct {
-	client VClient
-}
-type VClient interface {
-	InsertVote(u models.Vote) error
-	GetWinner([]models.VoteResult, error)
+type VoteService struct {
+	db *sql.DB
 }
 
-func (c *VotesClient) InsertVote(u models.Vote) error {
-	db, err := connectToVotesDB()
+func NewVoteService(db *sql.DB) *VoteService {
+	return &VoteService{db: db}
+}
+
+// Cast validates and stores a vote, decrementing the voter's pending votes.
+// Everything runs in one transaction with the voter row locked, so two votes
+// sent at the same time can't both use the last remaining vote.
+func (s *VoteService) Cast(ctx context.Context, passphrase string, candidateID int64, message string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
 		return err
 	}
-	defer db.Close()
+	defer tx.Rollback()
 
-	query := "INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)"
-
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	stmt, err := db.PrepareContext(ctx, query)
+	var voterID, pending int64
+	err = tx.QueryRowContext(ctx,
+		"SELECT id, pending_votes FROM users WHERE pw_code = ? FOR UPDATE", passphrase).
+		Scan(&voterID, &pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
-		log.Printf("Error %s when preparing SQL statement", err)
 		return err
 	}
-	defer stmt.Close()
 
-	res, err := stmt.ExecContext(ctx, u.VoterPassphrase, u.UserCostumeID, u.Message)
-	if err != nil {
-		log.Printf("Error %s when inserting row into votes table", err)
+	if err := checkVotingOpen(ctx, tx); err != nil {
 		return err
 	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		log.Printf("Error %s when finding rows affected", err)
+
+	switch {
+	case pending <= 0:
+		return ErrNoVotesLeft
+	case voterID == candidateID:
+		return ErrSelfVote
+	}
+
+	var candidates, previous int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE id = ?", candidateID).Scan(&candidates); err != nil {
 		return err
 	}
-	log.Printf("%d products created ", rows)
+	if candidates == 0 {
+		return ErrUnknownCandidate
+	}
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM votes WHERE voter_passphrase = ? AND user_costume_id = ?",
+		passphrase, candidateID).Scan(&previous); err != nil {
+		return err
+	}
+	if previous > 0 {
+		return ErrAlreadyVotedFor
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)",
+		passphrase, candidateID, message); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE users SET pending_votes = pending_votes - 1 WHERE id = ?", voterID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UndoWindow is how long after voting someone can take the vote back.
+const UndoWindow = 30 * time.Second
+
+// Undo removes a recent vote and gives the voter the vote back.
+func (s *VoteService) Undo(ctx context.Context, passphrase string, candidateID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := checkVotingOpen(ctx, tx); err != nil {
+		return err
+	}
+
+	var voteID, age int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, TIMESTAMPDIFF(SECOND, created_at, NOW()) FROM votes
+		WHERE voter_passphrase = ? AND user_costume_id = ? FOR UPDATE`,
+		passphrase, candidateID).Scan(&voteID, &age)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrVoteNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if age > int64(UndoWindow.Seconds()) {
+		return ErrUndoExpired
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM votes WHERE id = ?", voteID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE users SET pending_votes = pending_votes + 1 WHERE pw_code = ?", passphrase); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Feed returns the latest messages, newest first, without saying who wrote them.
+func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT v.id, u.costume, v.message, v.created_at
+		FROM votes v JOIN users u ON u.id = v.user_costume_id
+		WHERE v.message <> ''
+		ORDER BY v.id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]models.FeedItem, 0)
+	for rows.Next() {
+		var item models.FeedItem
+		if err := rows.Scan(&item.ID, &item.Costume, &item.Message, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// checkVotingOpen fails unless the admin started the vote and hasn't closed it.
+func checkVotingOpen(ctx context.Context, tx *sql.Tx) error {
+	var started, finished bool
+	if err := tx.QueryRowContext(ctx, "SELECT started, finished FROM game_state WHERE id = 1").
+		Scan(&started, &finished); err != nil {
+		return err
+	}
+	if !started || finished {
+		return ErrVotingClosed
+	}
 	return nil
 }
 
-func (c *VotesClient) InsertVotes(votes []models.Vote) error {
-	db, err := connectToVotesDB()
-	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
-		return err
-	}
-	defer db.Close()
-
-	query := "INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)"
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	stmt, err := db.PrepareContext(ctx, query)
-	if err != nil {
-		log.Printf("Error %s when preparing SQL statement", err)
-		return err
-	}
-	defer stmt.Close()
-
+// Seed inserts votes as-is, skipping validation. Used by the mock data loader.
+func (s *VoteService) Seed(ctx context.Context, votes []models.Vote) error {
 	for _, v := range votes {
-		_, err := stmt.ExecContext(ctx, v.VoterPassphrase, v.UserCostumeID, v.Message)
-		if err != nil {
-			log.Printf("Error %s when inserting row into votes table", err)
+		if v.UserCostumeID == 0 {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			"INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)",
+			v.VoterPassphrase, v.UserCostumeID, v.Message); err != nil {
 			return err
 		}
 	}
-	log.Printf("%d votes created ", len(votes))
 	return nil
 }
 
-func (c *VotesClient) GetWinners() ([]models.VoteResult, error) {
-	db, err := connectToVotesDB()
+const resultsQuery = `SELECT u.id, u.costume, u.name, COUNT(*) AS vote_count
+	FROM votes v JOIN users u ON v.user_costume_id = u.id
+	GROUP BY u.id, u.costume, u.name
+	ORDER BY vote_count DESC`
+
+// Winners returns the top 3 costumes by votes.
+func (s *VoteService) Winners(ctx context.Context) ([]models.VoteResult, error) {
+	return s.results(ctx, resultsQuery+" LIMIT 3")
+}
+
+// Results returns every voted costume with the messages it received.
+func (s *VoteService) Results(ctx context.Context) ([]models.VoteResult, error) {
+	results, err := s.results(ctx, resultsQuery)
 	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
 		return nil, err
 	}
-	defer db.Close()
 
-	query := `SELECT u.costume, u.name, COUNT(*) as vote_count 
-				FROM votes v JOIN users u 
-				ON v.user_costume_id = u.id 
-				GROUP BY v.user_costume_id
-				ORDER BY vote_count DESC
-				LIMIT 3;`
-
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	results := make([]models.VoteResult, 0)
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, `SELECT v.user_costume_id, u.name, v.message
+		FROM votes v JOIN users u ON u.pw_code = v.voter_passphrase`)
 	if err != nil {
-		log.Printf("Error %s when querying tables", err)
-		return results, err
+		return nil, err
 	}
 	defer rows.Close()
 
+	byCandidate := make(map[int64][]models.VoteData)
 	for rows.Next() {
-		var v models.VoteResult
-		if err := rows.Scan(&v.Costume, &v.Name, &v.VotesCount); err != nil {
-			log.Printf("Error %s when scanning row", err)
+		var id int64
+		var d models.VoteData
+		if err := rows.Scan(&id, &d.User, &d.Message); err != nil {
 			return nil, err
 		}
-		results = append(results, v)
+		byCandidate[id] = append(byCandidate[id], d)
 	}
-
 	if err := rows.Err(); err != nil {
-		log.Printf("Error %s during row iteration", err)
-		return results, err
+		return nil, err
 	}
 
+	for i := range results {
+		results[i].Data = byCandidate[results[i].ID]
+	}
 	return results, nil
 }
 
-func (c *VotesClient) GetResults() ([]models.VoteResult, error) {
-	db, err := connectToVotesDB()
+// Messages returns who voted for a candidate and what they wrote.
+func (s *VoteService) Messages(ctx context.Context, candidateID string) ([]models.VoteData, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT u.name, v.message
+		FROM votes v JOIN users u ON u.pw_code = v.voter_passphrase
+		WHERE v.user_costume_id = ?`, candidateID)
 	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
 		return nil, err
 	}
-	defer db.Close()
+	defer rows.Close()
 
-	query := `SELECT u.id ,u.costume, u.name, COUNT(*) as vote_count 
-				FROM votes v JOIN users u 
-				ON v.user_costume_id = u.id 
-				GROUP BY v.user_costume_id
-				ORDER BY vote_count DESC;`
+	messages := make([]models.VoteData, 0)
+	for rows.Next() {
+		var d models.VoteData
+		if err := rows.Scan(&d.User, &d.Message); err != nil {
+			return nil, err
+		}
+		messages = append(messages, d)
+	}
+	return messages, rows.Err()
+}
 
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	rows, err := db.QueryContext(ctx, query)
+func (s *VoteService) results(ctx context.Context, query string) ([]models.VoteResult, error) {
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
-		log.Printf("Error %s when querying tables", err)
-		return []models.VoteResult{}, err
+		return nil, err
 	}
 	defer rows.Close()
 
 	results := make([]models.VoteResult, 0)
-
 	for rows.Next() {
-		var v models.VoteResult
-		if err := rows.Scan(&v.ID, &v.Costume, &v.Name, &v.VotesCount); err != nil {
-			log.Printf("Error %s when scanning row", err)
+		var r models.VoteResult
+		if err := rows.Scan(&r.ID, &r.Costume, &r.Name, &r.VotesCount); err != nil {
 			return nil, err
 		}
-		log.Printf(v.Name)
-		messages, err := c.GetMessages(v.ID)
-		if err != nil {
-			log.Printf("Error %s when getting messages", err)
-			return nil, err
-		}
-		v.Data = messages
-		results = append(results, v)
+		results = append(results, r)
 	}
-
-	if err := rows.Err(); err != nil {
-		log.Printf("Error %s during row iteration", err)
-		return nil, err
-	}
-
-	return results, nil
-}
-
-func (c *VotesClient) GetMessages(id string) ([]models.VoteData, error) {
-	db, err := connectToVotesDB()
-	query := `SELECT u1.name, v.message
-		FROM 
-			votes v
-		JOIN 
-			users u1 ON u1.pw_code = v.voter_passphrase 
-		JOIN 
-			users u2 ON u2.id = v.user_costume_id
-		WHERE u2.ID = ?`
-
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	rows, err := db.QueryContext(ctx, query, id)
-	if err != nil {
-		log.Printf("Error %s when querying votes table", err)
-		return nil, err
-	}
-	defer rows.Close()
-
-	votes := make([]models.VoteData, 0)
-	for rows.Next() {
-		var u models.VoteData
-		if err := rows.Scan(&u.User, &u.Message); err != nil {
-			log.Printf("Error %s when scanning row", err)
-			return nil, err
-		}
-		votes = append(votes, u)
-	}
-
-	if err := rows.Err(); err != nil {
-		log.Printf("Error %s during row iteration", err)
-		return nil, err
-	}
-
-	return votes, nil
-}
-
-func connectToVotesDB() (*sql.DB, error) {
-	db, err := repository.DBConnection()
-	if err != nil {
-		log.Printf("Error %s when getting db connection", err)
-		return nil, err
-	}
-	log.Printf("Successfully connected to database")
-
-	err = repository.CreateVotesTable(db)
-	if err != nil {
-		log.Printf("Create votes table failed with error %s", err)
-		return nil, err
-	}
-	return db, nil
+	return results, rows.Err()
 }

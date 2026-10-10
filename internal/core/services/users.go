@@ -3,137 +3,66 @@ package services
 import (
 	"context"
 	"database/sql"
-	"halloween/internal/adapters/repository"
-	"halloween/internal/models"
-	"log"
+	"errors"
+	"fmt"
 	"math/rand"
-	"strconv"
 	"strings"
-	"time"
+
+	"halloween/internal/models"
 )
 
-type UserClient struct {
-	client Client
-}
-type Client interface {
-	InsertUser(u models.User) error
-	GetAllUsers() ([]models.User, error)
-	GetUserByPathphrase(pw string) (*models.User, error)
-	Vote(user *models.User) error
-}
+var (
+	ErrNotFound         = errors.New("user does not exist")
+	ErrNoVotesLeft      = errors.New("user has already voted: no votes left")
+	ErrSelfVote         = errors.New("you can't vote for yourself")
+	ErrAlreadyVotedFor  = errors.New("user has already voted for this costume")
+	ErrUnknownCandidate = errors.New("candidate does not exist")
+	ErrVotingClosed     = errors.New("voting is closed")
+	ErrVoteNotFound     = errors.New("vote does not exist")
+	ErrUndoExpired      = errors.New("too late to undo this vote")
+)
 
-func (c *UserClient) InsertUser(u models.User) error {
-	db, err := connectToDB()
-	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
-		return err
-	}
-	defer db.Close()
-
-	query := "INSERT INTO users(is_admin, name, pw_code, costume, pending_votes) VALUES (?, ?, ?, ?, ?)"
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	stmt, err := db.PrepareContext(ctx, query)
-	if err != nil {
-		log.Printf("Error %s when preparing SQL statement", err)
-		return err
-	}
-	defer stmt.Close()
-
-	pw := generatePass(strings.ToLower(u.Name), false)
-
-	res, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, u.PendingVotes) //2 votes for each user
-	if err != nil {
-		log.Printf("Error %s when inserting row into products table", err)
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		log.Printf("Error %s when finding rows affected", err)
-		return err
-	}
-	log.Printf("%d products created ", rows)
-	return nil
+type UserService struct {
+	db *sql.DB
 }
 
-func (c *UserClient) InsertUsers(users []models.User, mock bool) error {
-	db, err := connectToDB()
+func NewUserService(db *sql.DB) *UserService {
+	return &UserService{db: db}
+}
+
+// Create inserts all users in a single transaction and returns them with their
+// new ID and generated pass code. With fixedCodes every code is name+"11"
+// (used by the mock data loader).
+func (s *UserService) Create(ctx context.Context, users []models.User, fixedCodes bool) ([]models.User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
-		return err
+		return nil, err
 	}
-	defer db.Close()
+	defer tx.Rollback()
 
-	query := "INSERT INTO users(is_admin, name, pw_code, costume, pending_votes) VALUES (?, ?, ?, ?, ?)"
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	stmt, err := db.PrepareContext(ctx, query)
-	if err != nil {
-		log.Printf("Error %s when preparing SQL statement", err)
-		return err
-	}
-	defer stmt.Close()
-
+	created := make([]models.User, 0, len(users))
 	for _, u := range users {
-		pw := generatePass(strings.ToLower(u.Name), mock)
-
-		_, err := stmt.ExecContext(ctx, u.IsAdmin, u.Name, pw, u.Costume, u.PendingVotes)
+		u.PWCode = generatePass(u.Name, fixedCodes)
+		res, err := tx.ExecContext(ctx,
+			"INSERT INTO users(is_admin, name, pw_code, costume, pending_votes) VALUES (?, ?, ?, ?, ?)",
+			u.IsAdmin, u.Name, u.PWCode, u.Costume, u.PendingVotes)
 		if err != nil {
-			log.Printf("Error %s when inserting row into users table", err)
-			return err
+			return nil, fmt.Errorf("inserting user %q: %w", u.Name, err)
 		}
+		u.ID, _ = res.LastInsertId()
+		created = append(created, u)
 	}
-	log.Printf("%d users created ", len(users))
-	return nil
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
-func (c *UserClient) LogIn(pass string) (*models.LoggedUser, error) {
-	db, err := connectToDB()
+// List returns every user ordered by name, without their pass codes.
+func (s *UserService) List(ctx context.Context) ([]models.User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, is_admin, name, pending_votes, costume FROM users ORDER BY name")
 	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
-		return nil, err
-	}
-	defer db.Close()
-
-	query := `SELECT id, is_admin, pending_votes FROM users WHERE pw_code = ?`
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	stmt, err := db.PrepareContext(ctx, query)
-	if err != nil {
-		log.Printf("Error %s when preparing SQL statement", err)
-		return nil, err
-	}
-	defer stmt.Close()
-
-	var user models.LoggedUser
-	row := stmt.QueryRowContext(ctx, pass)
-	if err := row.Scan(&user.ID, &user.IsAdmin, &user.PendingVotes); err != nil {
-		log.Printf("Error scanning row: %s", err)
-		return nil, err
-	}
-
-	log.Printf("User logged in: %+v", user)
-	return &user, nil
-}
-
-func (c *UserClient) GetAllUsers() ([]models.User, error) {
-	db, err := connectToDB()
-	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
-		return nil, err
-	}
-	defer db.Close()
-
-	query := "SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users ORDER BY name ASC;"
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	rows, err := db.QueryContext(ctx, query)
-	if err != nil {
-		log.Printf("Error %s when querying users table", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -141,100 +70,32 @@ func (c *UserClient) GetAllUsers() ([]models.User, error) {
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume); err != nil {
-			log.Printf("Error %s when scanning row", err)
+		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PendingVotes, &u.Costume); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
 	}
-
-	if err := rows.Err(); err != nil {
-		log.Printf("Error %s during row iteration", err)
-		return nil, err
-	}
-
-	return users, nil
+	return users, rows.Err()
 }
 
-func (c *UserClient) GetUserByPathphrase(pw string) (*models.User, error) {
-	db, err := connectToDB()
+func (s *UserService) GetByPassphrase(ctx context.Context, pw string) (*models.User, error) {
+	var u models.User
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users WHERE pw_code = ?", pw).
+		Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
 		return nil, err
 	}
-	defer db.Close()
-
-	query := "SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users WHERE pw_code = ?;"
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-
-	stmt, err := db.PrepareContext(ctx, query)
-	if err != nil {
-		log.Printf("Error %s when preparing SQL statement", err)
-		return nil, err
-	}
-	defer stmt.Close()
-
-	var user models.User
-	row := stmt.QueryRowContext(ctx, pw)
-	if err := row.Scan(&user.ID, &user.IsAdmin, &user.Name, &user.PWCode, &user.PendingVotes, &user.Costume); err != nil {
-		log.Printf("Error scanning row: %s", err)
-		return nil, err
-	}
-
-	log.Printf("User logged in: %+v", user)
-	return &user, nil
-
+	return &u, nil
 }
 
-func (c *UserClient) Vote(user *models.User) error {
-	db, err := connectToDB()
-	if err != nil {
-		log.Printf("Error %s when connecting to DB", err)
-		return err
+func generatePass(name string, fixed bool) string {
+	suffix := "11"
+	if !fixed {
+		suffix = fmt.Sprintf("%02d", rand.Intn(100))
 	}
-	defer db.Close()
-
-	// Update the HasVoted field in the database
-	updateQuery := "UPDATE users SET pending_votes = ? WHERE id = ?"
-	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelfunc()
-	stmt, err := db.PrepareContext(ctx, updateQuery)
-	defer stmt.Close()
-
-	_, err = db.Exec(updateQuery, max(user.PendingVotes-1, 0), user.ID)
-	if err != nil {
-		log.Printf("Error %s when updating pending votes field in DB", err)
-		return err
-	}
-
-	return nil
-
-}
-
-func connectToDB() (*sql.DB, error) {
-	db, err := repository.DBConnection()
-	if err != nil {
-		log.Printf("Error %s when getting db connection", err)
-		return nil, err
-	}
-	log.Printf("Successfully connected to database")
-
-	err = repository.CreateUsersTable(db)
-	if err != nil {
-		log.Printf("Create users table failed with error %s", err)
-		return nil, err
-	}
-	return db, nil
-}
-
-func generatePass(name string, mock bool) string {
-	if !mock {
-		id := ""
-		for i := 0; i < 2; i++ {
-			id += strconv.Itoa(rand.Intn(10))
-		}
-		return name + id
-	}
-	return name + "11"
+	return strings.ToLower(name) + suffix
 }

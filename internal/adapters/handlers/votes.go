@@ -2,104 +2,92 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
-	"github.com/go-chi/chi/v5"
-	"halloween/internal/core/services"
-	"halloween/internal/models"
-	"log"
+	"errors"
 	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+
+	"halloween/internal/models"
 )
 
-func PostVote(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) PostVote(w http.ResponseWriter, r *http.Request) {
 	var vote models.Vote
-	err := json.NewDecoder(r.Body).Decode(&vote)
-
-	log.Println(vote)
-
-	if err != nil || vote.UserCostumeID == 0 {
-		ErrorBuilder(w, err, http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&vote); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-
+	if vote.UserCostumeID == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("user_costume_id is required"))
+		return
+	}
 	passphrase := r.Header.Get("User")
 	if passphrase == "" {
-		ErrorBuilder(w, fmt.Errorf("passphrase is required"), http.StatusBadRequest)
-		return
-	}
-	ucli := &services.UserClient{}
-	log.Println(passphrase)
-	user, err := ucli.GetUserByPathphrase(passphrase)
-	if err != nil {
-		ErrorBuilder(w, fmt.Errorf("user does not exist"), http.StatusBadRequest)
+		writeError(w, http.StatusUnauthorized, errMissingPassphrase)
 		return
 	}
 
-	//If the user has already voted cannot vote again
-	if user.PendingVotes == 0 {
-		ErrorBuilder(w, fmt.Errorf("user has already voted twice"), http.StatusInternalServerError)
+	if err := h.votes.Cast(r.Context(), passphrase, vote.UserCostumeID, vote.Message); err != nil {
+		writeServiceError(w, err)
 		return
 	}
-
-	vote.VoterPassphrase = passphrase
-	cli := &services.VotesClient{}
-	err = cli.InsertVote(vote)
-	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
-		return
-	}
-	err = ucli.Vote(user)
-	if err != nil {
-		ErrorBuilder(w, fmt.Errorf("error in updating users' vote"), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(Response{
-		Message: fmt.Sprintf("created %s's vote successfully", vote.VoterPassphrase),
-		Code:    http.StatusCreated,
-	})
-	return
+	writeJSON(w, http.StatusCreated, Response{Message: "vote created successfully", Code: http.StatusCreated})
 }
 
-func GetWinners(w http.ResponseWriter, _ *http.Request) {
-	cli := &services.VotesClient{}
-	winners, err := cli.GetWinners()
+func (h *Handler) GetWinners(w http.ResponseWriter, r *http.Request) {
+	winners, err := h.votes.Winners(r.Context())
 	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
+		writeServiceError(w, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(winners)
-	return
+	writeJSON(w, http.StatusOK, winners)
 }
 
-func GetResults(w http.ResponseWriter, _ *http.Request) {
-	cli := &services.VotesClient{}
-	winners, err := cli.GetResults()
+func (h *Handler) GetResults(w http.ResponseWriter, r *http.Request) {
+	results, err := h.votes.Results(r.Context())
 	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
+		writeServiceError(w, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(winners)
-	return
+	writeJSON(w, http.StatusOK, results)
 }
 
-func GetMessages(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	cli := &services.VotesClient{}
-	messages, err := cli.GetMessages(id)
+func (h *Handler) GetMessages(w http.ResponseWriter, r *http.Request) {
+	messages, err := h.votes.Messages(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		ErrorBuilder(w, err, http.StatusInternalServerError)
+		writeServiceError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(messages)
-	return
+	writeJSON(w, http.StatusOK, messages)
+}
+
+// UndoVote takes back a vote cast a few seconds ago (see services.UndoWindow).
+func (h *Handler) UndoVote(w http.ResponseWriter, r *http.Request) {
+	candidateID, err := strconv.ParseInt(chi.URLParam(r, "candidateID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("invalid candidate id"))
+		return
+	}
+	passphrase := r.Header.Get("User")
+	if passphrase == "" {
+		writeError(w, http.StatusUnauthorized, errMissingPassphrase)
+		return
+	}
+	if err := h.votes.Undo(r.Context(), passphrase, candidateID); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, Response{Message: "vote removed", Code: http.StatusOK})
+}
+
+const feedSize = 30
+
+// GetFeed returns the latest anonymous messages for the live board.
+func (h *Handler) GetFeed(w http.ResponseWriter, r *http.Request) {
+	items, err := h.votes.Feed(r.Context(), feedSize)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
