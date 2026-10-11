@@ -26,16 +26,6 @@ func (s *GameService) State(ctx context.Context) (GameState, error) {
 	return st, err
 }
 
-func (s *GameService) SetStarted(ctx context.Context, started bool) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE game_state SET started = ? WHERE id = 1", started)
-	return err
-}
-
-func (s *GameService) SetFinished(ctx context.Context, finished bool) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE game_state SET finished = ? WHERE id = 1", finished)
-	return err
-}
-
 // Set stores the whole state at once (used by the admin controls).
 func (s *GameService) Set(ctx context.Context, st GameState) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE game_state SET started = ?, finished = ? WHERE id = 1", st.Started, st.Finished)

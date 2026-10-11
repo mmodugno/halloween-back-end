@@ -28,11 +28,6 @@ type Response struct {
 	Users   []models.User `json:",omitempty"`
 }
 
-type ResponseBool struct {
-	Message bool
-	Code    int
-}
-
 func CreateRouter(h *Handler) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -49,32 +44,24 @@ func CreateRouter(h *Handler) *chi.Mux {
 		// Anyone
 		r.Get("/users/login", h.Login)
 		r.Get("/users", h.GetAllUsers)
-		r.Get("/users/passphrase", h.GetUserByPassphrase)
 		r.Post("/votes", h.PostVote)
 		r.Delete("/votes/{candidateID}", h.UndoVote)
 		r.Get("/feed", h.GetFeed)
 		r.Get("/stats", h.GetStats)
 		r.Get("/results/winners", h.GetWinners)
 		r.Get("/results/{id}", h.GetMessages) // only your own, or any if admin
-		r.Get("/finish", h.GetFinished)
-		r.Get("/start", h.GetStarted)
 		r.Get("/game", h.GetGame)
 
 		// Creating users: open while the app has no users, then admins only.
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdminOrSetup)
-			r.Post("/users", h.PostUser)
 			r.Post("/users/batch", h.PostUsers)
-			r.Post("/mocks/create", h.LoadMocks)
 		})
 
 		// Admins only
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdmin)
 			r.Put("/game", h.PutGame)
-			r.Put("/finish", h.setState(setFinished, true))
-			r.Put("/finish/cancel", h.setState(setFinished, false))
-			r.Put("/start", h.setState(setStarted, true))
 			r.Get("/results", h.GetResults)
 			r.Get("/admin/users", h.AdminUsers)
 			r.Put("/admin/users/{id}", h.UpdateUser)

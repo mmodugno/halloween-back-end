@@ -11,16 +11,6 @@ import (
 
 var errMissingPassphrase = errors.New("passphrase is required")
 
-// PostUser creates one user and returns it with its generated pass code.
-func (h *Handler) PostUser(w http.ResponseWriter, r *http.Request) {
-	var user models.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	h.createUsers(w, r, []models.User{user})
-}
-
 // PostUsers creates several users and returns them with their generated pass codes.
 func (h *Handler) PostUsers(w http.ResponseWriter, r *http.Request) {
 	var users []models.User
@@ -32,7 +22,7 @@ func (h *Handler) PostUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createUsers(w http.ResponseWriter, r *http.Request, users []models.User) {
-	created, err := h.users.Create(r.Context(), users, false)
+	created, err := h.users.Create(r.Context(), users)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -54,12 +44,6 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:      user.IsAdmin,
 		PendingVotes: user.PendingVotes,
 	})
-}
-
-func (h *Handler) GetUserByPassphrase(w http.ResponseWriter, r *http.Request) {
-	if user, ok := h.currentUser(w, r); ok {
-		writeJSON(w, http.StatusOK, user)
-	}
 }
 
 func (h *Handler) GetAllUsers(w http.ResponseWriter, r *http.Request) {

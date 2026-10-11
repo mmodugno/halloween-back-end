@@ -245,21 +245,6 @@ func (s *VoteService) Reset(ctx context.Context, votesPerUser int64) error {
 	return tx.Commit()
 }
 
-// Seed inserts votes as-is, skipping validation. Used by the mock data loader.
-func (s *VoteService) Seed(ctx context.Context, votes []models.Vote) error {
-	for _, v := range votes {
-		if v.UserCostumeID == 0 {
-			continue
-		}
-		if _, err := s.db.ExecContext(ctx,
-			"INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)",
-			v.VoterPassphrase, v.UserCostumeID, v.Message); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 const resultsQuery = `SELECT u.id, u.costume, u.name, COUNT(*) AS vote_count
 	FROM votes v JOIN users u ON v.user_costume_id = u.id
 	GROUP BY u.id, u.costume, u.name

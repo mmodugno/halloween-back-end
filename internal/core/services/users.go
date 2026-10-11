@@ -35,9 +35,8 @@ func NewUserService(db *sql.DB) *UserService {
 }
 
 // Create inserts all users in a single transaction and returns them with their
-// new ID and generated pass code. With fixedCodes every code is name+"11"
-// (used by the mock data loader).
-func (s *UserService) Create(ctx context.Context, users []models.User, fixedCodes bool) ([]models.User, error) {
+// new ID and generated pass code.
+func (s *UserService) Create(ctx context.Context, users []models.User) ([]models.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -51,7 +50,7 @@ func (s *UserService) Create(ctx context.Context, users []models.User, fixedCode
 		if u.Name == "" {
 			return nil, ErrMissingName
 		}
-		if u.PWCode, err = uniquePass(ctx, tx, u.Name, fixedCodes); err != nil {
+		if u.PWCode, err = uniquePass(ctx, tx, u.Name); err != nil {
 			return nil, err
 		}
 		res, err := tx.ExecContext(ctx,
@@ -185,22 +184,20 @@ func (s *UserService) GetByPassphrase(ctx context.Context, pw string) (*models.U
 
 // uniquePass picks a pass code not used by anyone else: the name in
 // lowercase without accents or spaces plus two digits (e.g. "maga42").
-func uniquePass(ctx context.Context, tx *sql.Tx, name string, fixed bool) (string, error) {
+func uniquePass(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	base := passBase(name)
 	for attempt := 0; attempt < 50; attempt++ {
-		suffix := "11"
-		if !fixed || attempt > 0 {
-			suffix = fmt.Sprintf("%02d", rand.Intn(100))
-		}
+		// Two digits first; three if the name is very common.
+		code := fmt.Sprintf("%s%02d", base, rand.Intn(100))
 		if attempt >= 30 {
-			suffix = fmt.Sprintf("%03d", rand.Intn(1000))
+			code = fmt.Sprintf("%s%03d", base, rand.Intn(1000))
 		}
 		var taken int
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE pw_code = ?", base+suffix).Scan(&taken); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE pw_code = ?", code).Scan(&taken); err != nil {
 			return "", err
 		}
 		if taken == 0 {
-			return base + suffix, nil
+			return code, nil
 		}
 	}
 	return "", errors.New("could not generate a unique pass code")
