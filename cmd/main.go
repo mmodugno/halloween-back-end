@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"halloween/internal/adapters/handlers"
 	"halloween/internal/adapters/repository"
@@ -18,6 +19,11 @@ func main() {
 
 	h := handlers.New(services.NewUserService(db), services.NewVoteService(db), services.NewGameService(db))
 
-	log.Println("server running on port 8080")
-	log.Fatal(http.ListenAndServe(":8080", handlers.CreateRouter(h)))
+	// Hosting platforms (e.g. Render) tell the app which port to use.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Printf("server running on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, handlers.CreateRouter(h)))
 }

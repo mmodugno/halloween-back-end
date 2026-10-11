@@ -2,7 +2,10 @@ package repository
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +17,9 @@ import (
 
 type Config struct {
 	User, Password, Host, Port, Name string
+	// TLS: "" (off), "true" (system CAs) or "custom" (CACert below).
+	TLS    string
+	CACert string
 }
 
 // ConfigFromEnv reads the DB_* variables, defaulting to a local MySQL.
@@ -24,6 +30,8 @@ func ConfigFromEnv() Config {
 		Host:     getenv("DB_HOST", "127.0.0.1"),
 		Port:     getenv("DB_PORT", "3306"),
 		Name:     getenv("DB_NAME", "halloween"),
+		TLS:      os.Getenv("DB_TLS"),
+		CACert:   os.Getenv("DB_CA_CERT"),
 	}
 }
 
@@ -34,6 +42,7 @@ func (c Config) dsn(dbName string) string {
 	cfg.Net = "tcp"
 	cfg.Addr = net.JoinHostPort(c.Host, c.Port)
 	cfg.DBName = dbName
+	cfg.TLSConfig = c.TLS
 	cfg.ParseTime = true
 	cfg.ClientFoundRows = true // UPDATE reports matched rows, even if nothing changed
 	return cfg.FormatDSN()
@@ -42,6 +51,19 @@ func (c Config) dsn(dbName string) string {
 // Connect waits for MySQL to be up, creates the database and tables if they
 // don't exist and returns a connection pool shared by the whole app.
 func Connect(c Config) (*sql.DB, error) {
+	// Hosted databases (e.g. Aiven) require TLS with their own CA certificate,
+	// passed as PEM text in DB_CA_CERT.
+	if c.CACert != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(c.CACert)) {
+			return nil, errors.New("DB_CA_CERT is not a valid PEM certificate")
+		}
+		if err := mysql.RegisterTLSConfig("custom", &tls.Config{RootCAs: pool, ServerName: c.Host}); err != nil {
+			return nil, err
+		}
+		c.TLS = "custom"
+	}
+
 	server, err := sql.Open("mysql", c.dsn(""))
 	if err != nil {
 		return nil, err
