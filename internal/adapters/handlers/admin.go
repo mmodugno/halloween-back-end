@@ -102,6 +102,36 @@ func (h *Handler) ResetVotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Message: "votes reset", Code: http.StatusOK})
 }
 
+// AdminMessages lists every message (published or not) for moderation.
+func (h *Handler) AdminMessages(w http.ResponseWriter, r *http.Request) {
+	messages, err := h.votes.AdminMessages(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, messages)
+}
+
+// UpdateMessage hides or shows a message in the live feed: {"hidden": true}.
+func (h *Handler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Hidden bool `json:"hidden"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := h.votes.SetHidden(r.Context(), id, body.Hidden); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
 func idParam(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {

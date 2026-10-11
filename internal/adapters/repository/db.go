@@ -91,6 +91,10 @@ func Connect(c Config) (*sql.DB, error) {
 			return nil, fmt.Errorf("creating tables: %w", err)
 		}
 	}
+	if err := addMissingColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("adding columns: %w", err)
+	}
 	log.Printf("connected to database %s", c.Name)
 	return db, nil
 }
@@ -136,6 +140,31 @@ var schema = []string{
 		started boolean not null default false,
 		finished boolean not null default false)`,
 	`INSERT IGNORE INTO game_state(id) VALUES (1)`,
+}
+
+// Columns added after the first release. They are created on databases that
+// already exist (CREATE TABLE IF NOT EXISTS doesn't add columns).
+var addedColumns = []struct{ table, column, definition string }{
+	{"votes", "hidden", "boolean not null default false"},
+}
+
+func addMissingColumns(db *sql.DB) error {
+	for _, c := range addedColumns {
+		var n int
+		err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`, c.table, c.column).Scan(&n)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.definition)); err != nil {
+			return err
+		}
+		log.Printf("added column %s.%s", c.table, c.column)
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

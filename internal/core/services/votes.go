@@ -124,20 +124,25 @@ const (
 	FeedDelaySpread = 6 * time.Minute
 )
 
+// visibleAt is when a vote's message shows up in the feed. The delay is
+// derived from the vote id, so it is stable across requests.
+const visibleAt = `v.created_at + INTERVAL (? + CRC32(CONCAT('feed', v.id)) % ?) SECOND`
+
+func delayArgs() []any {
+	return []any{int(FeedMinDelay.Seconds()), int(FeedDelaySpread.Seconds()) + 1}
+}
+
 // Feed returns the latest published messages, newest first, without saying
-// who wrote them or when.
+// who wrote them or when. Messages hidden by an admin are left out.
 func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, error) {
-	// The delay is derived from the vote id, so it is stable across requests.
 	rows, err := s.db.QueryContext(ctx, `SELECT id, costume, message FROM (
-			SELECT v.id, u.costume, v.message,
-				v.created_at + INTERVAL (? + CRC32(CONCAT('feed', v.id)) % ?) SECOND AS visible_at
+			SELECT v.id, u.costume, v.message, `+visibleAt+` AS visible_at
 			FROM votes v JOIN users u ON u.id = v.user_costume_id
-			WHERE v.message <> ''
+			WHERE v.message <> '' AND NOT v.hidden
 		) published
 		WHERE visible_at <= NOW()
 		ORDER BY visible_at DESC
-		LIMIT ?`,
-		int(FeedMinDelay.Seconds()), int(FeedDelaySpread.Seconds())+1, limit)
+		LIMIT ?`, append(delayArgs(), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +157,63 @@ func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, e
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// AdminMessages returns every message right away (even before it's published
+// in the feed) with its author, so the admin can hide one in time.
+func (s *VoteService) AdminMessages(ctx context.Context) ([]models.AdminMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT v.id, u.costume, COALESCE(voter.name, ''), v.message, v.hidden,
+			`+visibleAt+` <= NOW()
+		FROM votes v
+		JOIN users u ON u.id = v.user_costume_id
+		LEFT JOIN users voter ON voter.pw_code = v.voter_passphrase
+		WHERE v.message <> ''
+		ORDER BY v.id DESC`, delayArgs()...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]models.AdminMessage, 0)
+	for rows.Next() {
+		var m models.AdminMessage
+		if err := rows.Scan(&m.ID, &m.Costume, &m.Author, &m.Message, &m.Hidden, &m.Published); err != nil {
+			return nil, err
+		}
+		messages = append(messages, m)
+	}
+	return messages, rows.Err()
+}
+
+// SetHidden hides a message from the live feed (or shows it again). The vote
+// itself still counts.
+func (s *VoteService) SetHidden(ctx context.Context, id int64, hidden bool) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE votes SET hidden = ? WHERE id = ? AND message <> ''", hidden, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrMessageNotFound
+	}
+	return nil
+}
+
+// Stats are the public totals shown on the big screen.
+type Stats struct {
+	Guests   int `json:"guests"`
+	Cast     int `json:"cast"`
+	Possible int `json:"possible"`
+}
+
+func (s *VoteService) Stats(ctx context.Context) (Stats, error) {
+	var st Stats
+	var pending int
+	err := s.db.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM users),
+			(SELECT COUNT(*) FROM votes),
+			(SELECT COALESCE(SUM(pending_votes), 0) FROM users)`).Scan(&st.Guests, &st.Cast, &pending)
+	st.Possible = st.Cast + pending
+	return st, err
 }
 
 // checkVotingOpen fails unless the admin started the vote and hasn't closed it.

@@ -22,6 +22,7 @@ var (
 	ErrUndoExpired      = errors.New("too late to undo this vote")
 	ErrMissingName      = errors.New("name is required")
 	ErrUserNotFound     = errors.New("user not found")
+	ErrMessageNotFound  = errors.New("message not found")
 	ErrForbidden        = errors.New("only admins can do this")
 )
 

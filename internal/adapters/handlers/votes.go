@@ -102,3 +102,13 @@ func (h *Handler) GetFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, items)
 }
+
+// GetStats returns public totals (guests, votes cast, votes possible).
+func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
+	st, err := h.votes.Stats(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}

@@ -53,6 +53,7 @@ func CreateRouter(h *Handler) *chi.Mux {
 		r.Post("/votes", h.PostVote)
 		r.Delete("/votes/{candidateID}", h.UndoVote)
 		r.Get("/feed", h.GetFeed)
+		r.Get("/stats", h.GetStats)
 		r.Get("/results/winners", h.GetWinners)
 		r.Get("/results/{id}", h.GetMessages) // only your own, or any if admin
 		r.Get("/finish", h.GetFinished)
@@ -79,6 +80,8 @@ func CreateRouter(h *Handler) *chi.Mux {
 			r.Put("/admin/users/{id}", h.UpdateUser)
 			r.Delete("/admin/users/{id}", h.DeleteUser)
 			r.Post("/admin/votes/reset", h.ResetVotes)
+			r.Get("/admin/messages", h.AdminMessages)
+			r.Put("/admin/messages/{id}", h.UpdateMessage)
 		})
 	})
 	return r
@@ -105,7 +108,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, services.ErrForbidden):
 		status = http.StatusForbidden
-	case errors.Is(err, services.ErrVoteNotFound), errors.Is(err, services.ErrUserNotFound):
+	case errors.Is(err, services.ErrVoteNotFound), errors.Is(err, services.ErrUserNotFound),
+		errors.Is(err, services.ErrMessageNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, services.ErrNoVotesLeft), errors.Is(err, services.ErrAlreadyVotedFor),
 		errors.Is(err, services.ErrVotingClosed), errors.Is(err, services.ErrUndoExpired):

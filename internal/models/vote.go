@@ -26,3 +26,13 @@ type FeedItem struct {
 	Costume string `json:"costume"`
 	Message string `json:"message"`
 }
+
+// AdminMessage is a vote message as the admin sees it while moderating.
+type AdminMessage struct {
+	ID        int64  `json:"id"`
+	Costume   string `json:"costume"`
+	Author    string `json:"author"`
+	Message   string `json:"message"`
+	Hidden    bool   `json:"hidden"`
+	Published bool   `json:"published"`
+}
