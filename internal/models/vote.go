@@ -3,7 +3,7 @@ package models
 type Vote struct {
 	ID              string `json:"id"`
 	VoterPassphrase string `json:"voter_passphrase"`
-	UserCostumeID   int64  `json:"user_costume_id"`
+	CostumeID       int64  `json:"costume_id"`
 	Message         string `json:"message"`
 }
 

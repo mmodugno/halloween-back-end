@@ -67,7 +67,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user.ID = id
-	if err := h.users.Update(r.Context(), user); err != nil {
+	if err := h.users.Update(r.Context(), &user); err != nil {
 		writeServiceError(w, err)
 		return
 	}

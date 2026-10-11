@@ -46,20 +46,16 @@ func (s *UserService) Create(ctx context.Context, users []models.User) ([]models
 	created := make([]models.User, 0, len(users))
 	for _, u := range users {
 		u.Name = strings.TrimSpace(u.Name)
-		u.Costume = strings.TrimSpace(u.Costume)
 		if u.Name == "" {
 			return nil, ErrMissingName
 		}
-		if u.PWCode, err = uniquePass(ctx, tx, u.Name); err != nil {
+		// People with the same costume text end up in the same costume.
+		if u.CostumeID, u.Costume, err = findOrCreateCostume(ctx, tx, u.Costume); err != nil {
 			return nil, err
 		}
-		res, err := tx.ExecContext(ctx,
-			"INSERT INTO users(is_admin, name, pw_code, costume, pending_votes) VALUES (?, ?, ?, ?, ?)",
-			u.IsAdmin, u.Name, u.PWCode, u.Costume, u.PendingVotes)
-		if err != nil {
+		if err := insertUser(ctx, tx, &u); err != nil {
 			return nil, fmt.Errorf("inserting user %q: %w", u.Name, err)
 		}
-		u.ID, _ = res.LastInsertId()
 		created = append(created, u)
 	}
 	if err := tx.Commit(); err != nil {
@@ -68,26 +64,71 @@ func (s *UserService) Create(ctx context.Context, users []models.User) ([]models
 	return created, nil
 }
 
-// Update changes a user's name, costume, remaining votes and admin flag.
-func (s *UserService) Update(ctx context.Context, u models.User) error {
+// Update changes a user's name, remaining votes and admin flag, and moves
+// them to another costume: the one with id CostumeID, or else the one named
+// Costume (created if it doesn't exist; empty means no costume).
+func (s *UserService) Update(ctx context.Context, u *models.User) error {
 	u.Name = strings.TrimSpace(u.Name)
 	if u.Name == "" {
 		return ErrMissingName
 	}
-	res, err := s.db.ExecContext(ctx,
-		"UPDATE users SET name = ?, costume = ?, pending_votes = ?, is_admin = ? WHERE id = ?",
-		u.Name, strings.TrimSpace(u.Costume), u.PendingVotes, u.IsAdmin, u.ID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	defer tx.Rollback()
+
+	var currentID int64
+	var currentName string
+	var members int
+	err = tx.QueryRowContext(ctx, `SELECT u.costume_id, COALESCE(c.name, ''),
+			(SELECT COUNT(*) FROM users m WHERE m.costume_id = u.costume_id)
+		FROM users u LEFT JOIN costumes c ON c.id = u.costume_id
+		WHERE u.id = ? FOR UPDATE`, u.ID).Scan(&currentID, &currentName, &members)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUserNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+
+	newName := strings.Join(strings.Fields(u.Costume), " ")
+	switch {
+	case u.CostumeID > 0 && u.CostumeID != currentID:
+		err = tx.QueryRowContext(ctx, "SELECT name FROM costumes WHERE id = ?", u.CostumeID).Scan(&u.Costume)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCostumeNotFound
+		}
+	case currentID != 0 && strings.EqualFold(newName, currentName):
+		u.CostumeID, u.Costume = currentID, currentName
+	default:
+		var taken int
+		err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM costumes WHERE LOWER(name) = LOWER(?)", newName).Scan(&taken)
+		if err == nil && taken == 0 && currentID != 0 && members == 1 && newName != "" {
+			// Alone in the costume: just rename it, keeping its votes.
+			u.CostumeID, u.Costume = currentID, newName
+			_, err = tx.ExecContext(ctx, "UPDATE costumes SET name = ? WHERE id = ?", newName, currentID)
+		} else if err == nil {
+			u.CostumeID, u.Costume, err = findOrCreateCostume(ctx, tx, newName)
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE users SET name = ?, costume = ?, costume_id = ?, pending_votes = ?, is_admin = ? WHERE id = ?",
+		u.Name, u.Costume, u.CostumeID, u.PendingVotes, u.IsAdmin, u.ID); err != nil {
+		return err
+	}
+	if err := dropEmptyCostumes(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// Delete removes a user and every vote they cast or received. People who
-// had voted for them get that vote back.
+// Delete removes a user and the votes they cast. If nobody else wears their
+// costume, it goes too, and whoever voted for it gets the vote back.
 func (s *UserService) Delete(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -104,19 +145,14 @@ func (s *UserService) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 
-	steps := []struct {
-		query string
-		args  []any
-	}{
-		{`UPDATE users u JOIN votes v ON v.voter_passphrase = u.pw_code
-			SET u.pending_votes = u.pending_votes + 1 WHERE v.user_costume_id = ?`, []any{id}},
-		{"DELETE FROM votes WHERE user_costume_id = ? OR voter_passphrase = ?", []any{id, pw}},
-		{"DELETE FROM users WHERE id = ?", []any{id}},
+	if _, err := tx.ExecContext(ctx, "DELETE FROM votes WHERE voter_passphrase = ?", pw); err != nil {
+		return err
 	}
-	for _, step := range steps {
-		if _, err := tx.ExecContext(ctx, step.query, step.args...); err != nil {
-			return err
-		}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id); err != nil {
+		return err
+	}
+	if err := dropEmptyCostumes(ctx, tx); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -131,7 +167,7 @@ func (s *UserService) Count(ctx context.Context) (int, error) {
 // ListWithCodes returns every user including their pass code (admin only).
 func (s *UserService) ListWithCodes(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users ORDER BY name")
+		"SELECT id, is_admin, name, pw_code, pending_votes, costume, costume_id FROM users ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +176,7 @@ func (s *UserService) ListWithCodes(ctx context.Context) ([]models.User, error) 
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume); err != nil {
+		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume, &u.CostumeID); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -151,7 +187,7 @@ func (s *UserService) ListWithCodes(ctx context.Context) ([]models.User, error) 
 // List returns every user ordered by name, without their pass codes.
 func (s *UserService) List(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, is_admin, name, pending_votes, costume FROM users ORDER BY name")
+		"SELECT id, is_admin, name, pending_votes, costume, costume_id FROM users ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +196,7 @@ func (s *UserService) List(ctx context.Context) ([]models.User, error) {
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PendingVotes, &u.Costume); err != nil {
+		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PendingVotes, &u.Costume, &u.CostumeID); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -171,8 +207,8 @@ func (s *UserService) List(ctx context.Context) ([]models.User, error) {
 func (s *UserService) GetByPassphrase(ctx context.Context, pw string) (*models.User, error) {
 	var u models.User
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, is_admin, name, pw_code, pending_votes, costume FROM users WHERE pw_code = ?", pw).
-		Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume)
+		"SELECT id, is_admin, name, pw_code, pending_votes, costume, costume_id FROM users WHERE pw_code = ?", pw).
+		Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume, &u.CostumeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

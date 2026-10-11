@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -95,6 +96,10 @@ func Connect(c Config) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("adding columns: %w", err)
 	}
+	if err := linkCostumes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("linking costumes: %w", err)
+	}
 	log.Printf("connected to database %s", c.Name)
 	return db, nil
 }
@@ -140,12 +145,21 @@ var schema = []string{
 		started boolean not null default false,
 		finished boolean not null default false)`,
 	`INSERT IGNORE INTO game_state(id) VALUES (1)`,
+	// People who share a costume compete as one: votes go to the costume.
+	`CREATE TABLE IF NOT EXISTS costumes(
+		id int primary key auto_increment,
+		name varchar(80) not null,
+		created_at datetime default CURRENT_TIMESTAMP)`,
 }
 
 // Columns added after the first release. They are created on databases that
 // already exist (CREATE TABLE IF NOT EXISTS doesn't add columns).
 var addedColumns = []struct{ table, column, definition string }{
 	{"votes", "hidden", "boolean not null default false"},
+	{"votes", "costume_id", "int not null default 0"},
+	{"users", "costume_id", "int not null default 0"},
+	{"game_state", "registration_open", "boolean not null default true"},
+	{"game_state", "votes_per_user", "int not null default 2"},
 }
 
 func addMissingColumns(db *sql.DB) error {
@@ -165,6 +179,77 @@ func addMissingColumns(db *sql.DB) error {
 		log.Printf("added column %s.%s", c.table, c.column)
 	}
 	return nil
+}
+
+// linkCostumes moves data from before costumes had their own table: users
+// with the same costume text join one costume, and votes (which pointed at a
+// user) now point at that user's costume. It only touches unlinked rows, so
+// running it on every start is a no-op once done.
+func linkCostumes(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT u.id, u.name, TRIM(u.costume) FROM users u
+		WHERE u.costume_id = 0 AND (TRIM(u.costume) <> ''
+			OR EXISTS (SELECT 1 FROM votes v WHERE v.costume_id = 0 AND v.user_costume_id = u.id))
+		ORDER BY u.id`)
+	if err != nil {
+		return err
+	}
+	type pending struct {
+		id            int64
+		name, costume string
+	}
+	var users []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.name, &p.costume); err != nil {
+			rows.Close()
+			return err
+		}
+		users = append(users, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	type costume struct {
+		id   int64
+		name string
+	}
+	byName := map[string]costume{}
+	for _, u := range users {
+		name := u.costume
+		if name == "" {
+			name = u.name // got votes without a costume: compete under their name
+		}
+		key := strings.ToLower(name)
+		c, ok := byName[key]
+		if !ok {
+			res, err := tx.Exec("INSERT INTO costumes(name) VALUES (?)", name)
+			if err != nil {
+				return err
+			}
+			c.id, _ = res.LastInsertId()
+			c.name = name
+			byName[key] = c
+		}
+		if _, err := tx.Exec("UPDATE users SET costume_id = ?, costume = ? WHERE id = ?", c.id, c.name, u.id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE votes v JOIN users u ON u.id = v.user_costume_id
+		SET v.costume_id = u.costume_id WHERE v.costume_id = 0`); err != nil {
+		return err
+	}
+	if len(users) > 0 {
+		log.Printf("linked %d users to costumes", len(users))
+	}
+	return tx.Commit()
 }
 
 func getenv(key, fallback string) string {

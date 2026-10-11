@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -13,13 +14,14 @@ import (
 )
 
 type Handler struct {
-	users *services.UserService
-	votes *services.VoteService
-	game  *services.GameService
+	users   *services.UserService
+	votes   *services.VoteService
+	game    *services.GameService
+	signups *signupLimiter
 }
 
 func New(users *services.UserService, votes *services.VoteService, game *services.GameService) *Handler {
-	return &Handler{users: users, votes: votes, game: game}
+	return &Handler{users: users, votes: votes, game: game, signups: newSignupLimiter(40, 10*time.Minute)}
 }
 
 type Response struct {
@@ -44,12 +46,14 @@ func CreateRouter(h *Handler) *chi.Mux {
 		// Anyone
 		r.Get("/users/login", h.Login)
 		r.Get("/users", h.GetAllUsers)
+		r.Get("/costumes", h.GetCostumes)
+		r.Post("/register", h.Register)
 		r.Post("/votes", h.PostVote)
 		r.Delete("/votes/{candidateID}", h.UndoVote)
 		r.Get("/feed", h.GetFeed)
 		r.Get("/stats", h.GetStats)
 		r.Get("/results/winners", h.GetWinners)
-		r.Get("/results/{id}", h.GetMessages) // only your own, or any if admin
+		r.Get("/results/{id}", h.GetMessages) // only your own costume, or any if admin
 		r.Get("/game", h.GetGame)
 
 		// Creating users: open while the app has no users, then admins only.
@@ -62,6 +66,8 @@ func CreateRouter(h *Handler) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdmin)
 			r.Put("/game", h.PutGame)
+			r.Put("/admin/registration", h.PutRegistration)
+			r.Put("/admin/costumes/{id}", h.RenameCostume)
 			r.Get("/results", h.GetResults)
 			r.Get("/admin/users", h.AdminUsers)
 			r.Put("/admin/users/{id}", h.UpdateUser)
@@ -91,15 +97,19 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, services.ErrNotFound):
 		status = http.StatusUnauthorized
 	case errors.Is(err, services.ErrSelfVote), errors.Is(err, services.ErrUnknownCandidate),
-		errors.Is(err, services.ErrMissingName):
+		errors.Is(err, services.ErrMissingName), errors.Is(err, services.ErrMissingCostume),
+		errors.Is(err, services.ErrDuplicateName), errors.Is(err, services.ErrTooManyPartners),
+		errors.Is(err, services.ErrTooLong):
 		status = http.StatusBadRequest
 	case errors.Is(err, services.ErrForbidden):
 		status = http.StatusForbidden
 	case errors.Is(err, services.ErrVoteNotFound), errors.Is(err, services.ErrUserNotFound),
-		errors.Is(err, services.ErrMessageNotFound):
+		errors.Is(err, services.ErrMessageNotFound), errors.Is(err, services.ErrCostumeNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, services.ErrNoVotesLeft), errors.Is(err, services.ErrAlreadyVotedFor),
-		errors.Is(err, services.ErrVotingClosed), errors.Is(err, services.ErrUndoExpired):
+		errors.Is(err, services.ErrVotingClosed), errors.Is(err, services.ErrUndoExpired),
+		errors.Is(err, services.ErrRegistrationClosed), errors.Is(err, services.ErrAlreadyRegistered),
+		errors.Is(err, services.ErrGuestLimit):
 		status = http.StatusConflict
 	}
 	writeError(w, status, err)

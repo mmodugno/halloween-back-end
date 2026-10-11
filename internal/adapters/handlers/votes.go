@@ -17,8 +17,8 @@ func (h *Handler) PostVote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if vote.UserCostumeID == 0 {
-		writeError(w, http.StatusBadRequest, errors.New("user_costume_id is required"))
+	if vote.CostumeID == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("costume_id is required"))
 		return
 	}
 	passphrase := r.Header.Get("User")
@@ -27,7 +27,7 @@ func (h *Handler) PostVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.votes.Cast(r.Context(), passphrase, vote.UserCostumeID, vote.Message); err != nil {
+	if err := h.votes.Cast(r.Context(), passphrase, vote.CostumeID, vote.Message); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -52,15 +52,18 @@ func (h *Handler) GetResults(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, results)
 }
 
-// GetMessages returns who voted for a user and what they wrote. Only that
-// user (or an admin) can read them.
+// GetMessages returns who voted for a costume and what they wrote. Only the
+// people wearing it (or an admin) can read them.
 func (h *Handler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.currentUser(w, r)
 	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
-	if !user.IsAdmin && strconv.FormatInt(user.ID, 10) != id {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	if !user.IsAdmin && user.CostumeID != id {
 		writeError(w, http.StatusForbidden, errors.New("you can only read your own messages"))
 		return
 	}
@@ -76,7 +79,7 @@ func (h *Handler) GetMessages(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UndoVote(w http.ResponseWriter, r *http.Request) {
 	candidateID, err := strconv.ParseInt(chi.URLParam(r, "candidateID"), 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("invalid candidate id"))
+		writeError(w, http.StatusBadRequest, errors.New("invalid costume id"))
 		return
 	}
 	passphrase := r.Header.Get("User")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"halloween/internal/models"
@@ -17,20 +18,21 @@ func NewVoteService(db *sql.DB) *VoteService {
 	return &VoteService{db: db}
 }
 
-// Cast validates and stores a vote, decrementing the voter's pending votes.
+// Cast validates and stores a vote for a costume, decrementing the voter's
+// pending votes. Nobody can vote for the costume they're wearing.
 // Everything runs in one transaction with the voter row locked, so two votes
 // sent at the same time can't both use the last remaining vote.
-func (s *VoteService) Cast(ctx context.Context, passphrase string, candidateID int64, message string) error {
+func (s *VoteService) Cast(ctx context.Context, passphrase string, costumeID int64, message string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	var voterID, pending int64
+	var voterID, pending, ownCostume int64
 	err = tx.QueryRowContext(ctx,
-		"SELECT id, pending_votes FROM users WHERE pw_code = ? FOR UPDATE", passphrase).
-		Scan(&voterID, &pending)
+		"SELECT id, pending_votes, costume_id FROM users WHERE pw_code = ? FOR UPDATE", passphrase).
+		Scan(&voterID, &pending, &ownCostume)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -45,20 +47,21 @@ func (s *VoteService) Cast(ctx context.Context, passphrase string, candidateID i
 	switch {
 	case pending <= 0:
 		return ErrNoVotesLeft
-	case voterID == candidateID:
+	case ownCostume == costumeID:
 		return ErrSelfVote
 	}
 
 	var candidates, previous int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE id = ?", candidateID).Scan(&candidates); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM costumes c
+		WHERE c.id = ? AND EXISTS (SELECT 1 FROM users u WHERE u.costume_id = c.id)`, costumeID).Scan(&candidates); err != nil {
 		return err
 	}
 	if candidates == 0 {
 		return ErrUnknownCandidate
 	}
 	if err := tx.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM votes WHERE voter_passphrase = ? AND user_costume_id = ?",
-		passphrase, candidateID).Scan(&previous); err != nil {
+		"SELECT COUNT(*) FROM votes WHERE voter_passphrase = ? AND costume_id = ?",
+		passphrase, costumeID).Scan(&previous); err != nil {
 		return err
 	}
 	if previous > 0 {
@@ -66,8 +69,8 @@ func (s *VoteService) Cast(ctx context.Context, passphrase string, candidateID i
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO votes(voter_passphrase, user_costume_id, message) VALUES (?, ?, ?)",
-		passphrase, candidateID, message); err != nil {
+		"INSERT INTO votes(voter_passphrase, user_costume_id, costume_id, message) VALUES (?, 0, ?, ?)",
+		passphrase, costumeID, message); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -81,7 +84,7 @@ func (s *VoteService) Cast(ctx context.Context, passphrase string, candidateID i
 const UndoWindow = 30 * time.Second
 
 // Undo removes a recent vote and gives the voter the vote back.
-func (s *VoteService) Undo(ctx context.Context, passphrase string, candidateID int64) error {
+func (s *VoteService) Undo(ctx context.Context, passphrase string, costumeID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -95,8 +98,8 @@ func (s *VoteService) Undo(ctx context.Context, passphrase string, candidateID i
 	var voteID, age int64
 	err = tx.QueryRowContext(ctx,
 		`SELECT id, TIMESTAMPDIFF(SECOND, created_at, NOW()) FROM votes
-		WHERE voter_passphrase = ? AND user_costume_id = ? FOR UPDATE`,
-		passphrase, candidateID).Scan(&voteID, &age)
+		WHERE voter_passphrase = ? AND costume_id = ? FOR UPDATE`,
+		passphrase, costumeID).Scan(&voteID, &age)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrVoteNotFound
 	}
@@ -136,8 +139,8 @@ func delayArgs() []any {
 // who wrote them or when. Messages hidden by an admin are left out.
 func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, costume, message FROM (
-			SELECT v.id, u.costume, v.message, `+visibleAt+` AS visible_at
-			FROM votes v JOIN users u ON u.id = v.user_costume_id
+			SELECT v.id, c.name AS costume, v.message, `+visibleAt+` AS visible_at
+			FROM votes v JOIN costumes c ON c.id = v.costume_id
 			WHERE v.message <> '' AND NOT v.hidden
 		) published
 		WHERE visible_at <= NOW()
@@ -162,10 +165,10 @@ func (s *VoteService) Feed(ctx context.Context, limit int) ([]models.FeedItem, e
 // AdminMessages returns every message right away (even before it's published
 // in the feed) with its author, so the admin can hide one in time.
 func (s *VoteService) AdminMessages(ctx context.Context) ([]models.AdminMessage, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT v.id, u.costume, COALESCE(voter.name, ''), v.message, v.hidden,
+	rows, err := s.db.QueryContext(ctx, `SELECT v.id, c.name, COALESCE(voter.name, ''), v.message, v.hidden,
 			`+visibleAt+` <= NOW()
 		FROM votes v
-		JOIN users u ON u.id = v.user_costume_id
+		JOIN costumes c ON c.id = v.costume_id
 		LEFT JOIN users voter ON voter.pw_code = v.voter_passphrase
 		WHERE v.message <> ''
 		ORDER BY v.id DESC`, delayArgs()...)
@@ -245,10 +248,13 @@ func (s *VoteService) Reset(ctx context.Context, votesPerUser int64) error {
 	return tx.Commit()
 }
 
-const resultsQuery = `SELECT u.id, u.costume, u.name, COUNT(*) AS vote_count
-	FROM votes v JOIN users u ON v.user_costume_id = u.id
-	GROUP BY u.id, u.costume, u.name
-	ORDER BY vote_count DESC`
+// Name is everyone wearing the costume, e.g. "Lu, Sol y Tomi".
+const resultsQuery = `SELECT c.id, c.name,
+		(SELECT GROUP_CONCAT(m.name ORDER BY m.id SEPARATOR '||') FROM users m WHERE m.costume_id = c.id),
+		COUNT(*) AS vote_count
+	FROM votes v JOIN costumes c ON c.id = v.costume_id
+	GROUP BY c.id, c.name
+	ORDER BY vote_count DESC, MIN(v.id)`
 
 // Winners returns the top 3 costumes by votes.
 func (s *VoteService) Winners(ctx context.Context) ([]models.VoteResult, error) {
@@ -262,7 +268,7 @@ func (s *VoteService) Results(ctx context.Context) ([]models.VoteResult, error) 
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT v.user_costume_id, u.name, v.message
+	rows, err := s.db.QueryContext(ctx, `SELECT v.costume_id, u.name, v.message
 		FROM votes v JOIN users u ON u.pw_code = v.voter_passphrase`)
 	if err != nil {
 		return nil, err
@@ -288,11 +294,11 @@ func (s *VoteService) Results(ctx context.Context) ([]models.VoteResult, error) 
 	return results, nil
 }
 
-// Messages returns who voted for a candidate and what they wrote.
-func (s *VoteService) Messages(ctx context.Context, candidateID string) ([]models.VoteData, error) {
+// Messages returns who voted for a costume and what they wrote.
+func (s *VoteService) Messages(ctx context.Context, costumeID int64) ([]models.VoteData, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT u.name, v.message
 		FROM votes v JOIN users u ON u.pw_code = v.voter_passphrase
-		WHERE v.user_costume_id = ?`, candidateID)
+		WHERE v.costume_id = ?`, costumeID)
 	if err != nil {
 		return nil, err
 	}
@@ -319,10 +325,26 @@ func (s *VoteService) results(ctx context.Context, query string) ([]models.VoteR
 	results := make([]models.VoteResult, 0)
 	for rows.Next() {
 		var r models.VoteResult
-		if err := rows.Scan(&r.ID, &r.Costume, &r.Name, &r.VotesCount); err != nil {
+		var members sql.NullString
+		if err := rows.Scan(&r.ID, &r.Costume, &members, &r.VotesCount); err != nil {
 			return nil, err
 		}
+		r.Name = JoinNames(strings.Split(members.String, "||"))
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// JoinNames lists names the Spanish way: "Lu", "Lu y Tomi", "Lu, Sol y Tomi".
+func JoinNames(names []string) string {
+	clean := names[:0:0]
+	for _, n := range names {
+		if n != "" {
+			clean = append(clean, n)
+		}
+	}
+	if len(clean) <= 1 {
+		return strings.Join(clean, "")
+	}
+	return strings.Join(clean[:len(clean)-1], ", ") + " y " + clean[len(clean)-1]
 }

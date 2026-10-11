@@ -43,6 +43,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		ID:           user.ID,
 		IsAdmin:      user.IsAdmin,
 		PendingVotes: user.PendingVotes,
+		CostumeID:    user.CostumeID,
 	})
 }
 

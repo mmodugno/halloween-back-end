@@ -7,7 +7,8 @@ import (
 	"halloween/internal/core/services"
 )
 
-// GetGame returns whether the vote has started and finished.
+// GetGame returns whether the vote has started and finished, and the
+// registration settings.
 func (h *Handler) GetGame(w http.ResponseWriter, r *http.Request) {
 	st, err := h.game.State(r.Context())
 	if err != nil {
@@ -29,5 +30,5 @@ func (h *Handler) PutGame(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, st)
+	h.GetGame(w, r)
 }
