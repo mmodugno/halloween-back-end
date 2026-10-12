@@ -1,16 +1,17 @@
 # Render's free plan puts the backend to sleep after 15 minutes without
 # visits (and a sleeping backend uses no free hours). Aiven can power off an
 # idle free database. This workflow balances both:
-#  - once a day until the party: keeps the database alive and costs only
-#    ~15 minutes of Render hours per day;
+#  - every 2 hours until the party: keeps the database alive (a single
+#    visit a day wasn't enough, Aiven powered it off on Oct 12) and costs
+#    ~3 Render hours per day, well inside the 750 free hours;
 #  - every 5 minutes around the party so nobody waits for a cold start.
 # Times are UTC (Argentina is UTC-3). Change the party dates here if needed.
 name: Mantener despierta la app
 
 on:
   schedule:
-    # Every day at 12:00 (Argentina).
-    - cron: "0 15 * * *"
+    # Every 2 hours until October 29.
+    - cron: "0 */2 1-29 10 *"
     # Party: October 30 and 31, all day.
     - cron: "*/5 * 30,31 10 *"
     # Until 09:00 (Argentina) on November 1.
