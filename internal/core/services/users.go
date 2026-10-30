@@ -167,7 +167,11 @@ func (s *UserService) Count(ctx context.Context) (int, error) {
 // ListWithCodes returns every user including their pass code (admin only).
 func (s *UserService) ListWithCodes(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, is_admin, name, pw_code, pending_votes, costume, costume_id FROM users ORDER BY name")
+		`SELECT u.id, u.is_admin, u.name, u.pw_code, u.pending_votes, u.costume, u.costume_id, COALESCE(g.name, '')
+		FROM users u
+		LEFT JOIN costumes c ON c.id = u.costume_id
+		LEFT JOIN friend_groups g ON g.id = c.friend_group_id
+		ORDER BY u.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +180,7 @@ func (s *UserService) ListWithCodes(ctx context.Context) ([]models.User, error) 
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume, &u.CostumeID); err != nil {
+		if err := rows.Scan(&u.ID, &u.IsAdmin, &u.Name, &u.PWCode, &u.PendingVotes, &u.Costume, &u.CostumeID, &u.FriendGroup); err != nil {
 			return nil, err
 		}
 		users = append(users, u)

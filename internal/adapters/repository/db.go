@@ -150,6 +150,11 @@ var schema = []string{
 		id int primary key auto_increment,
 		name varchar(80) not null,
 		created_at datetime default CURRENT_TIMESTAMP)`,
+	// Groups of friends set by the admin: nobody can vote for a costume of
+	// their own group, so people vote outside their circle.
+	`CREATE TABLE IF NOT EXISTS friend_groups(
+		id int primary key auto_increment,
+		name varchar(60) not null)`,
 }
 
 // Columns added after the first release. They are created on databases that
@@ -160,6 +165,7 @@ var addedColumns = []struct{ table, column, definition string }{
 	{"users", "costume_id", "int not null default 0"},
 	{"game_state", "registration_open", "boolean not null default true"},
 	{"game_state", "votes_per_user", "int not null default 2"},
+	{"costumes", "friend_group_id", "int not null default 0"},
 }
 
 func addMissingColumns(db *sql.DB) error {

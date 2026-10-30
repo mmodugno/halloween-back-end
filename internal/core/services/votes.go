@@ -51,13 +51,22 @@ func (s *VoteService) Cast(ctx context.Context, passphrase string, costumeID int
 		return ErrSelfVote
 	}
 
-	var candidates, previous int
+	var candidates, previous, sameGroup int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM costumes c
 		WHERE c.id = ? AND EXISTS (SELECT 1 FROM users u WHERE u.costume_id = c.id)`, costumeID).Scan(&candidates); err != nil {
 		return err
 	}
 	if candidates == 0 {
 		return ErrUnknownCandidate
+	}
+	// Friends set by the admin in the same group can't vote for each other.
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM costumes mine JOIN costumes theirs
+		ON theirs.friend_group_id = mine.friend_group_id
+		WHERE mine.id = ? AND theirs.id = ? AND mine.friend_group_id <> 0`, ownCostume, costumeID).Scan(&sameGroup); err != nil {
+		return err
+	}
+	if sameGroup > 0 {
+		return ErrSameGroup
 	}
 	if err := tx.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM votes WHERE voter_passphrase = ? AND costume_id = ?",

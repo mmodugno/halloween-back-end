@@ -68,6 +68,7 @@ func CreateRouter(h *Handler) *chi.Mux {
 			r.Put("/game", h.PutGame)
 			r.Put("/admin/registration", h.PutRegistration)
 			r.Put("/admin/costumes/{id}", h.RenameCostume)
+			r.Put("/admin/costumes/{id}/group", h.SetFriendGroup)
 			r.Get("/results", h.GetResults)
 			r.Get("/admin/users", h.AdminUsers)
 			r.Put("/admin/users/{id}", h.UpdateUser)
@@ -96,7 +97,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, services.ErrNotFound):
 		status = http.StatusUnauthorized
-	case errors.Is(err, services.ErrSelfVote), errors.Is(err, services.ErrUnknownCandidate),
+	case errors.Is(err, services.ErrSelfVote), errors.Is(err, services.ErrSameGroup),
+		errors.Is(err, services.ErrUnknownCandidate),
 		errors.Is(err, services.ErrMissingName), errors.Is(err, services.ErrMissingCostume),
 		errors.Is(err, services.ErrDuplicateName), errors.Is(err, services.ErrTooManyPartners),
 		errors.Is(err, services.ErrTooLong):

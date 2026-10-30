@@ -86,6 +86,27 @@ func (h *Handler) RenameCostume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+// SetFriendGroup puts a costume in a group of friends: {"group": "Facu y cía"}.
+// An empty group takes it out.
+func (h *Handler) SetFriendGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Group string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := h.users.SetFriendGroup(r.Context(), id, body.Group); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
 var errTooManySignups = errors.New("too many sign-ups from this connection, try again in a few minutes")
 
 // signupLimiter caps how many people one IP can sign up per window, so a

@@ -18,6 +18,7 @@ var (
 	ErrTooManyPartners    = errors.New("too many people in one costume")
 	ErrTooLong            = errors.New("name or costume is too long")
 	ErrGuestLimit         = errors.New("the guest list is full")
+	ErrSameGroup          = errors.New("you can't vote for your own group of friends")
 )
 
 const (
@@ -25,7 +26,8 @@ const (
 	maxNameLen     = 40
 	maxCostumeLen  = 60
 	maxGuests      = 500
-	costumesSelect = `SELECT c.id, c.name, u.name FROM costumes c
+	maxGroupLen    = 60
+	costumesSelect = `SELECT c.id, c.name, c.friend_group_id, u.name FROM costumes c
 		JOIN users u ON u.costume_id = c.id
 		ORDER BY c.name, c.id, u.id`
 )
@@ -40,13 +42,13 @@ func (s *UserService) Costumes(ctx context.Context) ([]models.Costume, error) {
 
 	costumes := make([]models.Costume, 0)
 	for rows.Next() {
-		var id int64
+		var id, group int64
 		var name, member string
-		if err := rows.Scan(&id, &name, &member); err != nil {
+		if err := rows.Scan(&id, &name, &group, &member); err != nil {
 			return nil, err
 		}
 		if n := len(costumes); n == 0 || costumes[n-1].ID != id {
-			costumes = append(costumes, models.Costume{ID: id, Name: name})
+			costumes = append(costumes, models.Costume{ID: id, Name: name, GroupID: group})
 		}
 		last := &costumes[len(costumes)-1]
 		last.Members = append(last.Members, member)
@@ -278,4 +280,46 @@ func dropEmptyCostumes(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// SetFriendGroup puts a costume in the group of friends with that name
+// (ignoring case), creating the group if needed. An empty name takes it out
+// of its group. Groups left without costumes are deleted.
+func (s *UserService) SetFriendGroup(ctx context.Context, costumeID int64, group string) error {
+	group = strings.Join(strings.Fields(group), " ")
+	if len([]rune(group)) > maxGroupLen {
+		return ErrTooLong
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var groupID int64
+	if group != "" {
+		err := tx.QueryRowContext(ctx,
+			"SELECT id FROM friend_groups WHERE LOWER(name) = LOWER(?) ORDER BY id LIMIT 1", group).Scan(&groupID)
+		if errors.Is(err, sql.ErrNoRows) {
+			res, err := tx.ExecContext(ctx, "INSERT INTO friend_groups(name) VALUES (?)", group)
+			if err != nil {
+				return err
+			}
+			groupID, _ = res.LastInsertId()
+		} else if err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx, "UPDATE costumes SET friend_group_id = ? WHERE id = ?", groupID, costumeID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCostumeNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM friend_groups
+		WHERE id NOT IN (SELECT friend_group_id FROM costumes)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
