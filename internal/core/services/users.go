@@ -49,8 +49,9 @@ func (s *UserService) Create(ctx context.Context, users []models.User) ([]models
 		if u.Name == "" {
 			return nil, ErrMissingName
 		}
-		// People with the same costume text end up in the same costume.
-		if u.CostumeID, u.Costume, err = findOrCreateCostume(ctx, tx, u.Costume); err != nil {
+		// Everyone gets their own costume, even if the text matches another
+		// one: the admin groups them by hand.
+		if u.CostumeID, u.Costume, err = createCostume(ctx, tx, u.Costume); err != nil {
 			return nil, err
 		}
 		if err := insertUser(ctx, tx, &u); err != nil {
@@ -64,9 +65,10 @@ func (s *UserService) Create(ctx context.Context, users []models.User) ([]models
 	return created, nil
 }
 
-// Update changes a user's name, remaining votes and admin flag, and moves
-// them to another costume: the one with id CostumeID, or else the one named
-// Costume (created if it doesn't exist; empty means no costume).
+// Update changes a user's name, remaining votes and admin flag, and their
+// costume: the one with id CostumeID, or else a costume of their own named
+// Costume (empty means no costume). A costume with the same name as another
+// one is never merged with it.
 func (s *UserService) Update(ctx context.Context, u *models.User) error {
 	u.Name = strings.TrimSpace(u.Name)
 	if u.Name == "" {
@@ -94,23 +96,20 @@ func (s *UserService) Update(ctx context.Context, u *models.User) error {
 
 	newName := strings.Join(strings.Fields(u.Costume), " ")
 	switch {
-	case u.CostumeID > 0 && u.CostumeID != currentID:
+	case u.CostumeID == currentID && currentID != 0:
+		u.Costume = currentName
+	case u.CostumeID > 0:
 		err = tx.QueryRowContext(ctx, "SELECT name FROM costumes WHERE id = ?", u.CostumeID).Scan(&u.Costume)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCostumeNotFound
 		}
-	case currentID != 0 && strings.EqualFold(newName, currentName):
-		u.CostumeID, u.Costume = currentID, currentName
+	case currentID != 0 && members == 1 && newName != "":
+		// Alone in the costume: just rename it, keeping its votes.
+		u.CostumeID, u.Costume = currentID, newName
+		_, err = tx.ExecContext(ctx, "UPDATE costumes SET name = ? WHERE id = ?", newName, currentID)
 	default:
-		var taken int
-		err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM costumes WHERE LOWER(name) = LOWER(?)", newName).Scan(&taken)
-		if err == nil && taken == 0 && currentID != 0 && members == 1 && newName != "" {
-			// Alone in the costume: just rename it, keeping its votes.
-			u.CostumeID, u.Costume = currentID, newName
-			_, err = tx.ExecContext(ctx, "UPDATE costumes SET name = ? WHERE id = ?", newName, currentID)
-		} else if err == nil {
-			u.CostumeID, u.Costume, err = findOrCreateCostume(ctx, tx, newName)
-		}
+		// Leaves the costume they shared (if any) for one of their own.
+		u.CostumeID, u.Costume, err = createCostume(ctx, tx, newName)
 	}
 	if err != nil {
 		return err

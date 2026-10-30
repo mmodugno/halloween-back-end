@@ -221,27 +221,21 @@ func (s *UserService) RenameCostume(ctx context.Context, id int64, name string) 
 	return tx.Commit()
 }
 
-// findOrCreateCostume returns the costume with that name (ignoring case),
-// creating it if there is none. An empty name means no costume (id 0).
-func findOrCreateCostume(ctx context.Context, tx *sql.Tx, name string) (int64, string, error) {
+// createCostume adds a new costume with that name, even if another one is
+// called the same. An empty name means no costume (id 0).
+func createCostume(ctx context.Context, tx *sql.Tx, name string) (int64, string, error) {
 	name = strings.Join(strings.Fields(name), " ")
-	if name == "" {
+	switch {
+	case name == "":
 		return 0, "", nil
-	}
-	var id int64
-	err := tx.QueryRowContext(ctx,
-		"SELECT id, name FROM costumes WHERE LOWER(name) = LOWER(?) ORDER BY id LIMIT 1", name).Scan(&id, &name)
-	if err == nil {
-		return id, name, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, "", err
+	case len([]rune(name)) > maxCostumeLen:
+		return 0, "", ErrTooLong
 	}
 	res, err := tx.ExecContext(ctx, "INSERT INTO costumes(name) VALUES (?)", name)
 	if err != nil {
 		return 0, "", err
 	}
-	id, _ = res.LastInsertId()
+	id, _ := res.LastInsertId()
 	return id, name, nil
 }
 
